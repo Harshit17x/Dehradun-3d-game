@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#edf0e5">
   <meta name="description" content="A peaceful, single-car geographic driving experience through mapped Dehradun streets, with optional Google Maps comparison.">
   <title>Dehradun Drive — A little closer to the hills</title>
+  <link rel="stylesheet" href="/cesium/Widgets/widgets.css">
   <style>
     :root { font-family: 'Avenir Next', Avenir, 'Segoe UI', sans-serif; color: #253c35; background: #cbd8d6; font-synthesis: none; }
     * { box-sizing: border-box; }
@@ -22,6 +23,10 @@
      #map-panel.google-primary .map-panel-title, #map-panel.google-primary #map-status { position: absolute; z-index: 1; left: 28px; right: 28px; width: max-content; max-width: calc(100vw - 56px); margin: 0; padding: 10px 14px; border-radius: 12px; background: #f5f4eaf0; box-shadow: 0 7px 25px #16362216; }
      #map-panel.google-primary .map-panel-title { top: 24px; }
      #map-panel.google-primary #map-status { top: 72px; }
+     #cesium-panel { position: fixed; z-index: 1; inset: 0; display: none; background: #b9c6cd; }
+     #cesium-panel.active { display: block; }
+     #cesium-canvas { width: 100%; height: 100%; }
+     #cesium-status { position: absolute; left: 28px; top: 24px; z-index: 1; max-width: min(520px, calc(100vw - 56px)); padding: 10px 14px; border-radius: 12px; background: #f5f4eaf0; box-shadow: 0 7px 25px #16362216; font-size: 11px; line-height: 1.4; }
      #hud { position: fixed; z-index: 4; inset: 0; pointer-events: none; padding: 34px 38px; display: flex; flex-direction: column; justify-content: space-between; }
      #place-list { position: fixed; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
      .place-label { position: absolute; transform: translate(-50%, -100%); padding: 4px 7px; color: #344b3e; background: #f5f4eae8; border: 1px solid #fff9; border-radius: 8px; box-shadow: 0 4px 14px #29493918; font-size: 10px; white-space: nowrap; }
@@ -37,7 +42,10 @@
      #geo-status[data-tone="google"] { color: #55744e; }
      #geo-status[data-tone="diagnostic"] { color: #9a5d3a; }
     .brand h1 span { color: #879b77; }
-    .top-right { display: flex; align-items: center; gap: 10px; }
+     .top-right { display: flex; align-items: center; gap: 10px; }
+     .city-search { display: flex; gap: 6px; align-items: center; padding: 5px; border: 1px solid #fff8; background: #f5f4eaed; border-radius: 50px; pointer-events: auto; }
+     .city-search input { width: 170px; border: 0; outline: 0; background: transparent; color: #344b3e; font: inherit; font-size: 12px; padding: 8px 10px; }
+     .city-search button { border: 0; padding: 8px 12px; background: #d8e1c9; }
     .weather, button { border: 1px solid #fff8; background: #f5f4eaed; color: #344b3e; border-radius: 50px; font: inherit; font-size: 12px; padding: 13px 17px; }
     .weather { display: flex; gap: 10px; align-items: center; }
     .weather i { color: #bb914a; font-style: normal; font-size: 18px; }
@@ -91,11 +99,15 @@
     <div id="map-canvas" aria-label="Google vector map centered on Dehradun"></div>
     <p id="map-status">Google’s actual basemap is optional. The local OSM scene remains available as a fallback.</p>
   </section>
+  <section id="cesium-panel" aria-label="Cesium photorealistic 3D driving mode">
+    <div id="cesium-canvas"></div>
+    <div id="cesium-status">Cesium 3D mode is off.</div>
+  </section>
   <div id="place-list" aria-label="Mapped places"></div>
   <main id="hud">
     <header>
       <div class="brand"><div class="eyebrow">Uttarakhand · India</div><h1>Dehradun <span>Drive.</span></h1><p>A little closer to the hills.</p><div id="geo-status" role="status">Mapped streets + approximate facades · Google Maps when enabled.</div></div>
-       <div class="top-right"><div class="weather"><i>☀</i> Valley daylight</div><button id="map-toggle" aria-label="Show Google Maps 3D mode" aria-pressed="false">Google 3D</button><button id="audio-toggle" aria-label="Toggle vehicle audio" aria-pressed="false">🔊 Sound</button><button id="headlights-toggle" aria-label="Toggle headlights" aria-pressed="true">💡 Lights</button><button id="pause" aria-label="Pause driving" aria-pressed="false">Ⅱ Pause</button><button id="reset" title="Return to mapped OSM roads (R)">↺ Reset</button></div>
+       <div class="top-right"><div class="city-search"><input id="city-search-input" type="search" placeholder="Go to Dehradun place…" aria-label="Search a place in Dehradun"><button id="city-search-button" type="button">Go</button></div><div class="weather"><i>☀</i> Valley daylight</div><button id="cesium-toggle" aria-label="Show Cesium photorealistic 3D mode" aria-pressed="false">Cesium 3D</button><button id="map-toggle" aria-label="Show Google Maps 3D mode" aria-pressed="false">Google 3D</button><button id="audio-toggle" aria-label="Toggle vehicle audio" aria-pressed="false">🔊 Sound</button><button id="headlights-toggle" aria-label="Toggle headlights" aria-pressed="true">💡 Lights</button><button id="pause" aria-label="Pause driving" aria-pressed="false">Ⅱ Pause</button><button id="reset" title="Return to mapped OSM roads (R)">↺ Reset</button></div>
     </header>
     <section class="location" aria-label="Current road"><div class="eyebrow">Free drive · <span id="heading">N</span></div><div id="road-name">Rajpur Road</div></section>
     <section id="status" role="status"><h2>Welcome to the valley.</h2><p>Building your streetscape…</p></section>

@@ -10,12 +10,14 @@
     "fetch:map": "node scripts/fetch-dehradun.mjs",
     "fetch:district": "node scripts/fetch-dehradun.mjs --district",
     "fetch:district-buildings": "node scripts/fetch-dehradun.mjs --district --district-buildings",
-    "test": "node --test src/drive-physics.test.js && node --test src/geo-driving.test.js"
+    "test": "node --test src/drive-physics.test.js src/geo-driving.test.js src/street-infrastructure.test.js src/osm-normalize.test.js src/city-loader.test.js src/cesium-drive.test.js"
   },
   "devDependencies": {
     "vite": "^8.3.0"
   },
   "dependencies": {
-    "three": "^0.186.1"
+    "cesium": "^1.146.0",
+    "three": "^0.186.1",
+    "vite-plugin-cesium": "^1.2.23"
   }
 }

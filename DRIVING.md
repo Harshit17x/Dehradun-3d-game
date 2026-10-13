@@ -30,6 +30,31 @@ the app explicitly reports the reason and remains playable in geographic OSM
 mode. Google mode is not embedded in the offline HTML because its runtime
 configuration endpoint is intentionally server-backed.
 
+The **Cesium 3D** button is the photorealistic-city path. It loads CesiumJS
+and uses the Cesium Ion token through the private `/api/cesium-config` endpoint.
+Before starting Vite, configure the token locally without committing it:
+
+```sh
+export VITE_CESIUM_ION_TOKEN='your_private_cesium_ion_token'
+npm run dev
+```
+
+Or place the same variable in a local ignored environment file. The token is
+never written into source, the generated app snapshot, or logs. Your Cesium
+Ion project must have access to Google Photorealistic 3D Tiles if you want the
+photorealistic Dehradun surface; otherwise Cesium reports a clear fallback to
+Ion terrain/OSM buildings when available. Cesium also requires the generated
+`dist-drive/cesium` assets, so use `npm run preview` or `npm run dev` rather
+than opening `dehradun-drive.html` directly for Cesium mode.
+
+The local mode now includes a **Go to Dehradun place** search. Enter a mapped
+place, street, market, neighbourhood, or landmark and the app requests the
+bounded city cell around it, replaces the current OSM roads/buildings, and
+spawns the car on the nearest mapped road. The city loader covers a bounded
+Dehradun city region (`30.24–30.43 N`, `77.94–78.17 E`), not the entire
+district or every rural road. Public OSM data is loaded in overlapping cells
+to keep the browser and physics workload bounded.
+
 | Control | Action |
 | --- | --- |
 | W / Up | Accelerate; brake when reversing |
@@ -77,7 +102,17 @@ explorer code is retained in `src/`, its entry is
   full car capsule clearance, Clock Tower obstacle, and swept turns.
 - `src/google-drive-overlay.js`: optional Google vector map plus shared
   Three.js WebGL overlay with auth, timeout and context-loss handling.
+- `src/cesium-drive.js`: CesiumJS viewer, Google Photorealistic 3D Tiles/Ion
+  fallback, local ENU car placement, Cesium chase camera, runtime-token
+  handling and teardown. The local Three.js car is hidden while the single
+  Cesium car proxy is visible, so there is never a second controllable vehicle.
+- `src/city-loader.js`, `server/city-map.js`, `server/geocode.js`: bounded
+  city-cell loading and place search. Google Geocoding is used server-side when
+  the key is configured; otherwise the server uses public Nominatim. Client
+  responses are validated and stale requests are aborted.
 - `vite.config.js`: private runtime Google Maps configuration endpoint.
+- `vite.config.js`: private Google and Cesium runtime configuration endpoints
+  plus Cesium asset handling.
 - `src/drive-world.js`: legacy synthetic world retained for comparison only.
 - `src/drive-vehicle.js`: one detailed car, separately animated wheels and
   material-batched body details.
@@ -105,6 +140,15 @@ explorer code is retained in `src/`, its entry is
   within their animated groups. Device pixel ratio is capped at 1.75, and a
   local 2048² shadow map follows the vehicle. Google mode shares Google's
   WebGL context and never resizes or clears the basemap canvas.
+- Cesium mode streams the city surface instead of trying to package all of
+  Dehradun into the repository. The OSM physics and search layer remains the
+  authoritative drivable network; Google/Cesium 3D Tiles are visual surface
+  data and are not treated as automatically walkable collision geometry.
+- Traffic signals, pedestrian crossings, barriers and street lamps are only
+  rendered when supplied by OSM. Signal poles are explicitly inferred from a
+  mapped control node and nearby road edge; their exact physical pole placement
+  and timing are not available from ordinary OSM tags. Unknown gates are not
+  sealed as walls; explicit closed/locked/access=no barriers can collide.
 - World, car, textures, shadow resources, input listeners and renderer have
   explicit cleanup. Resource tests verify idempotent world/car disposal; these
   are not a substitute for a long-duration GPU memory profile.
@@ -113,3 +157,19 @@ explorer code is retained in `src/`, its entry is
 shows current render throughput. The current checks are Node regression tests,
 map-data validation and a production build; no separate lint/typecheck pipeline
 is configured.
+
+## Accuracy boundary
+
+This project can make a convincing geographically anchored driving prototype,
+but it cannot honestly promise a fully surveyed GTA-scale replica from a Google
+API key alone. Google Maps JavaScript/3D basemaps provide map imagery and native
+map geometry; they do not grant a downloadable, editable database of every
+traffic-light pole, lane marking, curb, shop façade, barrier state, or live
+traffic signal phase. Those details are therefore either mapped OSM features,
+explicitly marked inferences, or generic visual approximations. For true
+photorealistic buildings and city-wide road-level accuracy, use an authorized
+Google Photorealistic 3D Tiles workflow or licensed survey/photogrammetry data,
+then optimize/stream it in tiles rather than bundling the whole city into one
+HTML file. See Google's [WebGL Overlay View](https://developers.google.com/maps/documentation/javascript/webgl/webgl-overlay-view)
+and [Photorealistic 3D Tiles](https://developers.google.com/maps/documentation/tile/3d-tiles)
+documentation for the licensing and renderer requirements.

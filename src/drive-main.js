@@ -5,6 +5,9 @@ import { createRoadNetwork, createGeoState } from './geo-driving.js';
 import { stepGeoDriving } from './geo-driving.js';
 import { createVehicle } from './drive-vehicle.js';
 import { createGoogleDriveOverlay } from './google-drive-overlay.js';
+import { createCesiumDrive } from './cesium-drive.js';
+import { createCityLoader } from './city-loader.js';
+import { toLocal } from './geo-driving.js';
 import { sound } from './audio.js';
 import mappedData from './dehradun-data.json' with { type: 'json' };
 
@@ -15,13 +18,19 @@ const mapToggle = document.querySelector('#map-toggle');
 const mapPanel = document.querySelector('#map-panel');
 const mapCanvas = document.querySelector('#map-canvas');
 const mapStatus = document.querySelector('#map-status');
+const cesiumPanel = document.querySelector('#cesium-panel');
+const cesiumCanvas = document.querySelector('#cesium-canvas');
+const cesiumStatus = document.querySelector('#cesium-status');
+const cesiumToggle = document.querySelector('#cesium-toggle');
 const geoStatus = document.querySelector('#geo-status');
 const placeList = document.querySelector('#place-list');
 const ui = Object.fromEntries(['speed', 'speed-fill', 'gear', 'distance', 'fps', 'heading', 'road-name'].map(id => [id, document.getElementById(id)]));
 const events = new AbortController();
 const on = (target, type, handler, options = {}) => target.addEventListener(type, handler, { ...options, signal: events.signal });
 let renderer, mappedWorld, mappedSurface, vehicle, sun, frame = 0, stopped = false;
-let googleOverlay, googleOverlayPromise;
+let googleOverlay, googleOverlayPromise, googleOverlayGeneration = 0, cityLoader;
+let cesiumDrive, cesiumDrivePromise;
+let currentData = mappedData;
 
 function showStatus(title, text) {
   status.replaceChildren();
@@ -39,7 +48,7 @@ function setGeoStatus(text, tone = 'offline') {
   mapStatus.textContent = text;
 }
 
-const localCoverage = mappedData.provenance?.scope || 'Clock Tower urban extract';
+const localCoverage = () => currentData.provenance?.scope || 'Dehradun city region extract';
 
 function createMappedSurface(data, network) {
   const group = new THREE.Group();
@@ -62,9 +71,18 @@ function createMappedSurface(data, network) {
   group.add(ground);
 
   const parts = [];
+  const markingParts = [];
+  const markingMaterial = new THREE.MeshStandardMaterial({ color: '#f5f3ec', roughness: 0.85, metalness: 0.05 });
+  materials.add(markingMaterial);
+
   for (const road of Array.isArray(data.roads) ? data.roads : []) {
     const points = Array.isArray(road?.points) ? road.points : [];
-    const roadWidth = Number.isFinite(road?.width) ? THREE.MathUtils.clamp(road.width, 3, 32) : 8;
+    const rawWidth = Number.isFinite(road?.width) ? THREE.MathUtils.clamp(road.width, 3, 32) : 8;
+    const roadWidth = (road.id === 'way/1556686563' || (points.length >= 20 && /roundabout/i.test(road.kind || '')))
+      ? Math.max(rawWidth, 13)
+      : /chakrata/i.test(road.name || '')
+        ? Math.max(rawWidth, 10)
+        : rawWidth;
     for (let i = 1; i < points.length; i++) {
       const [ax, az] = points[i - 1] || [];
       const [bx, bz] = points[i] || [];
@@ -72,15 +90,70 @@ function createMappedSurface(data, network) {
       const dx = bx - ax, dz = bz - az, length = Math.hypot(dx, dz);
       if (length < 0.01) continue;
       const part = new THREE.BoxGeometry(roadWidth, 0.08, length);
+      const yaw = Math.atan2(dx, dz);
+      const rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
       const transform = new THREE.Matrix4().compose(
         new THREE.Vector3((ax + bx) / 2, -0.04, (az + bz) / 2),
-        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(dx, dz)),
+        rot,
         new THREE.Vector3(1, 1, 1),
       );
       part.applyMatrix4(transform);
       parts.push(part);
+
+      // White dashed centerline for standard two-lane roads
+      if (roadWidth >= 6.5 && length >= 5.0) {
+        const dashLen = 2.6, gapLen = 2.4;
+        const totalStep = dashLen + gapLen;
+        const count = Math.floor(length / totalStep);
+        const startOffset = (length - count * totalStep + gapLen) / 2;
+        const fx = dx / length, fz = dz / length;
+        for (let k = 0; k < count; k++) {
+          const midDist = startOffset + k * totalStep + dashLen / 2;
+          const mx = ax + fx * midDist, mz = az + fz * midDist;
+          const dash = new THREE.BoxGeometry(0.18, 0.012, dashLen);
+          dash.applyMatrix4(new THREE.Matrix4().compose(
+            new THREE.Vector3(mx, 0.006, mz),
+            rot,
+            new THREE.Vector3(1, 1, 1),
+          ));
+          markingParts.push(dash);
+        }
+      }
     }
   }
+
+  // Zebra pedestrian crossings at major Dehradun traffic light chowks
+  const ZEBRA_CHOWKS = [
+    { x: 10.5, z: -5.0, angle: 0, lanes: 8 },      // Rajpur Road approach to Clock Tower
+    { x: 2.5, z: 38.0, angle: Math.PI, lanes: 8 },   // Gandhi Road approach to Clock Tower
+    { x: -21.0, z: 24.5, angle: -Math.PI / 2, lanes: 7 }, // Chakrata Road approach
+    { x: 23.5, z: 18.0, angle: Math.PI / 2, lanes: 7 },  // Subhash Road approach
+    { x: 57.0, z: 180.0, angle: 0, lanes: 8 },     // Darshan Lal Chowk (North)
+    { x: 67.5, z: 200.0, angle: Math.PI, lanes: 8 },  // Darshan Lal Chowk (South)
+    { x: 74.0, z: 187.0, angle: Math.PI / 2, lanes: 8 }, // Darshan Lal Chowk (East)
+    { x: 50.0, z: 192.0, angle: -Math.PI / 2, lanes: 8 }, // Darshan Lal Chowk (West)
+    { x: 346.0, z: 302.0, angle: 0, lanes: 8 },    // Lansdowne Chowk (North)
+    { x: 356.5, z: 322.0, angle: Math.PI, lanes: 8 }, // Lansdowne Chowk (South)
+  ];
+
+  for (const chowk of ZEBRA_CHOWKS) {
+    const { x, z, angle, lanes } = chowk;
+    const sinA = Math.sin(angle), cosA = Math.cos(angle);
+    const rot = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+    const spacing = 0.5;
+    for (let i = -Math.floor(lanes / 2); i <= Math.floor(lanes / 2); i++) {
+      const offsetX = -cosA * (i * spacing);
+      const offsetZ = sinA * (i * spacing);
+      const stripe = new THREE.BoxGeometry(0.32, 0.014, 2.8);
+      stripe.applyMatrix4(new THREE.Matrix4().compose(
+        new THREE.Vector3(x + offsetX, 0.007, z + offsetZ),
+        rot,
+        new THREE.Vector3(1, 1, 1),
+      ));
+      markingParts.push(stripe);
+    }
+  }
+
   if (parts.length) {
     const roads = mergeGeometries(parts, false);
     for (const part of parts) part.dispose();
@@ -90,6 +163,18 @@ function createMappedSurface(data, network) {
       const mesh = new THREE.Mesh(roads, roadMaterial);
       mesh.name = 'Mapped OSM roads';
       mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+  }
+
+  if (markingParts.length) {
+    const markings = mergeGeometries(markingParts, false);
+    for (const part of markingParts) part.dispose();
+    if (markings) {
+      markings.computeBoundingSphere();
+      geometries.add(markings);
+      const mesh = new THREE.Mesh(markings, markingMaterial);
+      mesh.name = 'Mapped road centerlines and zebra crossings';
       group.add(mesh);
     }
   }
@@ -154,11 +239,14 @@ function buildMinimap(network) {
 }
 
 async function setMapVisible(visible, scene, state) {
+  if (visible && cesiumPanel?.classList.contains('active')) await setCesiumVisible(false, scene, state);
   mapPanel.hidden = !visible;
   mapToggle.setAttribute('aria-pressed', String(visible));
   mapToggle.textContent = visible ? '← Local 3D' : 'Google 3D';
+  mapToggle.setAttribute('aria-label', visible ? 'Return to local 3D mode' : 'Show Google Maps 3D mode');
   mapPanel.classList.toggle('google-primary', visible);
   if (!visible) {
+    googleOverlayGeneration++;
     googleOverlay?.dispose();
     googleOverlay = null;
     googleOverlayPromise = null;
@@ -171,18 +259,23 @@ async function setMapVisible(visible, scene, state) {
   }
   canvas.style.visibility = 'hidden';
   setGeoStatus('Loading Google vector map and shared Three.js overlay…', 'loading');
+  const requestGeneration = googleOverlayGeneration;
   if (!googleOverlayPromise) {
     googleOverlayPromise = createGoogleDriveOverlay({
       container: mapCanvas,
-      data: mappedData,
+      data: currentData,
       worldGroup: mappedWorld.group,
       vehicleGroup: vehicle.group,
       onStatus: (title, text) => {
         mapStatus.textContent = `${title} · ${text}`;
-        if (/ready/i.test(title)) setGeoStatus(`Google vector 3D active · the single car and ${localCoverage} are georeferenced over the actual basemap.`, 'google');
+        if (/ready/i.test(title)) setGeoStatus(`Google vector 3D active · the single car and ${localCoverage()} are georeferenced over the actual basemap.`, 'google');
          if (/unavailable/i.test(title)) setGeoStatus(`Google 3D unavailable · ${text} Local geographic OSM mode remains available.`, 'diagnostic');
        },
     }).then(result => {
+      if (requestGeneration !== googleOverlayGeneration || mapPanel.hidden || stopped) {
+        result.dispose();
+        throw new Error('Google 3D request was cancelled');
+      }
       googleOverlay = result;
       return result;
     }).catch(error => {
@@ -198,10 +291,56 @@ async function setMapVisible(visible, scene, state) {
   catch { /* status and offline fallback are handled above */ }
 }
 
+async function setCesiumVisible(visible, scene, state) {
+  cesiumToggle?.setAttribute('aria-pressed', String(visible));
+  if (cesiumToggle) {
+    cesiumToggle.textContent = visible ? '← Local 3D' : 'Cesium 3D';
+    cesiumToggle.setAttribute('aria-label', visible ? 'Return to local 3D mode' : 'Show Cesium photorealistic 3D mode');
+  }
+  if (!visible) {
+    cesiumDrive?.dispose();
+    cesiumDrive = null;
+    cesiumDrivePromise = null;
+    cesiumPanel?.classList.remove('active');
+    canvas.style.visibility = 'visible';
+    return;
+  }
+  if (mapPanel && !mapPanel.hidden) await setMapVisible(false, scene, state);
+  cesiumPanel?.classList.add('active');
+  canvas.style.visibility = 'hidden';
+  cesiumStatus.textContent = 'Loading Cesium Ion and photorealistic Dehradun 3D tiles…';
+  if (!cesiumDrivePromise) {
+    cesiumDrivePromise = createCesiumDrive({
+      container: cesiumCanvas,
+      data: currentData,
+      state,
+      vehicle,
+      onStatus: (title, text) => {
+        cesiumStatus.textContent = `${title} · ${text}`;
+        if (/unavailable|failed/i.test(title)) setGeoStatus(`Cesium 3D unavailable · ${text} Local geographic mode remains active.`, 'diagnostic');
+        if (/ready/i.test(title)) setGeoStatus(`Cesium 3D active · ${text}`, 'google');
+      },
+    }).then((result) => {
+      cesiumDrive = result;
+      return result;
+    }).catch((error) => {
+      cesiumDrivePromise = null;
+      cesiumDrive = null;
+      cesiumPanel?.classList.remove('active');
+      canvas.style.visibility = 'visible';
+      cesiumStatus.textContent = `Cesium unavailable · ${error.message || 'check VITE_CESIUM_ION_TOKEN and Cesium Ion access'}`;
+      setGeoStatus(`Cesium 3D unavailable · ${error.message || 'check the private Ion token configuration'}. Local geographic mode remains active.`, 'diagnostic');
+      throw error;
+    });
+  }
+  try { cesiumDrive = await cesiumDrivePromise; cesiumDrive.update(state, 1 / 60); }
+  catch { /* status and local fallback are handled above */ }
+}
+
 function start() {
-  const network = createRoadNetwork(mappedData);
-  mappedWorld = createGeoWorld(mappedData);
-  mappedSurface = createMappedSurface(mappedData, network);
+  let network = createRoadNetwork(currentData);
+  mappedWorld = createGeoWorld(currentData);
+  mappedSurface = createMappedSurface(currentData, network);
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75));
   renderer.setSize(innerWidth, innerHeight);
@@ -226,8 +365,12 @@ function start() {
   vehicle = createVehicle();
   scene.add(vehicle.group);
   const state = createGeoState(network);
-  const minimap = buildMinimap(network);
-  const labels = addPlaceLabels(mappedWorld.labels);
+  let minimap = buildMinimap(network);
+  let labels = addPlaceLabels(mappedWorld.labels);
+  cityLoader = createCityLoader({ onStatus: (event) => {
+    if (event.status === 'loading') setGeoStatus(`Loading mapped Dehradun streets near ${Number(event.lat).toFixed(4)}, ${Number(event.lng).toFixed(4)}…`, 'loading');
+    if (event.status === 'error') setGeoStatus(`City map unavailable · ${event.error?.message || 'request failed'}. Current mapped area remains active.`, 'diagnostic');
+  }});
   let paused = false;
   const keyboard = new Set();
   const touch = new Map();
@@ -274,6 +417,52 @@ function start() {
     Object.assign(previous, { x: state.x, z: state.z, heading: state.heading });
     accumulator = 0; clearInput(); vehicle.update(0, 0, 0.1, false); syncCar(); updateCamera(0, true); updateHUD();
   }
+
+  async function loadCityArea(lat, lng) {
+    if (cesiumPanel?.classList.contains('active')) await setCesiumVisible(false, scene, state);
+    if (mapPanel.classList.contains('google-primary')) await setMapVisible(false, scene, state);
+    try {
+      const nextData = await cityLoader.load(lat, lng);
+      const nextNetwork = createRoadNetwork(nextData);
+      const nextWorld = createGeoWorld(nextData);
+      const nextSurface = createMappedSurface(nextData, nextNetwork);
+      const target = toLocal(lat, lng, nextData.origin);
+      let nextState;
+      try { nextState = nextNetwork.spawnNear(target.x, target.z); }
+      catch { nextState = createGeoState(nextNetwork); }
+      mappedWorld?.dispose(); mappedSurface?.dispose();
+      scene.add(nextSurface.group, nextWorld.group);
+      placeList.replaceChildren();
+      mappedWorld = nextWorld; mappedSurface = nextSurface; network = nextNetwork; currentData = nextData;
+      labels = addPlaceLabels(mappedWorld.labels);
+      minimap = buildMinimap(network);
+      Object.assign(state, nextState);
+      Object.assign(previous, { x: state.x, z: state.z, heading: state.heading });
+      accumulator = 0;
+      syncCar(); updateCamera(0, true); updateHUD();
+      setGeoStatus(`Mapped city cell active · ${currentData.provenance?.counts?.buildings || 0} building footprints, ${currentData.provenance?.counts?.roads || 0} roads · OSM locations, approximate façades.`, 'offline');
+    } catch (error) {
+      setGeoStatus(`Could not load that Dehradun area · ${error.message || 'map request failed'}.`, 'diagnostic');
+    }
+  }
+
+  async function searchCity() {
+    const input = document.querySelector('#city-search-input');
+    const query = input?.value.trim();
+    if (!query) return;
+    const button = document.querySelector('#city-search-button');
+    if (button) button.disabled = true;
+    try {
+      const response = await fetch(`/api/geocode?q=${encodeURIComponent(query)}`, { headers: { accept: 'application/json' } });
+      const body = await response.json();
+      if (!response.ok || body.status !== 'ok' || !body.results?.length) throw new Error(body.error || 'No place found inside the Dehradun city region');
+      const result = body.results[0];
+      if (input) input.value = result.name.split(',')[0];
+      await loadCityArea(result.lat, result.lng);
+    } catch (error) {
+      setGeoStatus(`Search failed · ${error.message || 'try a named place in Dehradun'}.`, 'diagnostic');
+    } finally { if (button) button.disabled = false; }
+  }
   on(window, 'keydown', event => {
     sound.init();
     if (event.target instanceof HTMLButtonElement && ['Space', 'Enter'].includes(event.code)) return;
@@ -295,6 +484,9 @@ function start() {
   on(pauseButton, 'click', () => { sound.init(); setPaused(!paused); canvas.focus({ preventScroll: true }); });
   on(document.querySelector('#reset'), 'click', () => { sound.init(); reset(); canvas.focus({ preventScroll: true }); });
   on(mapToggle, 'click', () => { sound.init(); void setMapVisible(mapPanel.hidden, scene, state); });
+  on(cesiumToggle, 'click', () => { sound.init(); void setCesiumVisible(!cesiumPanel.classList.contains('active'), scene, state); });
+  on(document.querySelector('#city-search-button'), 'click', () => { sound.init(); void searchCity(); });
+  on(document.querySelector('#city-search-input'), 'keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); sound.init(); void searchCity(); } });
 
   const audioToggle = document.querySelector('#audio-toggle');
   if (audioToggle) {
@@ -387,6 +579,7 @@ function start() {
       vehicle.update(state.speed, state.steering, dt, isBraking);
       updateCamera(dt);
       googleOverlay?.update(state, dt);
+      cesiumDrive?.update(state, dt);
 
       // Real vehicle audio update
       const speedKmh = Math.abs(Math.round(state.speed * 3.6));
@@ -398,12 +591,13 @@ function start() {
     const texel = 130 / 2048;
     const sx = Math.round(state.x / texel) * texel, sz = Math.round(state.z / texel) * texel;
     sun.position.set(sx - 55, 95, sz - 35); sun.target.position.set(sx, 0, sz);
+    mappedWorld?.update?.(now / 1000);
     renderer.render(scene, camera); updatePlaceLabels(labels, camera);
     hudTime += dt; fpsTime += dt; fpsCount++;
     if (hudTime > 0.1) { updateHUD(); hudTime = 0; }
     if (fpsTime >= 0.75) { ui.fps.textContent = `${Math.round(fpsCount / fpsTime)} fps`; fpsCount = 0; fpsTime = 0; }
   }
-  setGeoStatus(`Local OSM coverage: ${localCoverage} · Google Maps 3D when enabled.`, 'offline');
+  setGeoStatus(`Local OSM coverage: ${localCoverage()} · search any mapped place in Dehradun to load its nearby streets.`, 'offline');
   reset();
   status.hidden = true;
   frame = requestAnimationFrame(animate);
@@ -414,8 +608,12 @@ function dispose() {
   stopped = true;
   cancelAnimationFrame(frame);
   events.abort();
+  cityLoader?.dispose?.();
   googleOverlay?.dispose();
   googleOverlay = null;
+  cesiumDrive?.dispose();
+  cesiumDrive = null;
+  cesiumDrivePromise = null;
   vehicle?.dispose(); mappedWorld?.dispose(); mappedSurface?.dispose();
   sun?.shadow.dispose(); renderer?.dispose();
   placeList.replaceChildren();

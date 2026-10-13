@@ -1,5 +1,7 @@
 // Geographic simulation: metres, radians, seconds. Heading zero is north (-z),
 // positive heading turns left. Rendering-independent; all geometry is supplied.
+import { getBarrierObstacles } from './street-infrastructure.js';
+export { getBarrierObstacles } from './street-infrastructure.js';
 export const DEFAULT_ORIGIN = { lat: 30.32448, lng: 78.04187 };
 const R = 6378137, DEG = Math.PI / 180, CELL = 24;
 const CAR_RADIUS = 1.1;
@@ -95,11 +97,18 @@ class Grid {
 }
 
 export function createRoadNetwork(data) {
+  data = data && typeof data === 'object' ? data : {};
   const roads = new Grid(), obstacles = new Grid(), segments = [];
   const origin = data.origin || DEFAULT_ORIGIN;
   const nw = data.bounds ? toLocal(data.bounds.north, data.bounds.west, origin) : { x: -Infinity, z: -Infinity };
   const se = data.bounds ? toLocal(data.bounds.south, data.bounds.east, origin) : { x: Infinity, z: Infinity };
-  for (const road of data.roads) {
+  for (const road of data.roads || []) {
+    const rawWidth = Number(road.width) || 8;
+    const roadWidth = (road.id === 'way/1556686563' || (road.points.length >= 20 && /roundabout/i.test(road.kind || '')))
+      ? Math.max(rawWidth, 13)
+      : /chakrata/i.test(road.name || '')
+        ? Math.max(rawWidth, 10)
+        : rawWidth;
     for (let i = 1; i < road.points.length; i++) {
       const [ax, az] = road.points[i - 1], [bx, bz] = road.points[i];
       if (Math.hypot(bx - ax, bz - az) < 0.001) continue;
@@ -107,7 +116,7 @@ export function createRoadNetwork(data) {
       const count = Math.ceil(Math.hypot(bx - ax, bz - az) / CELL);
       for (let k = 0; k < count; k++) {
         const a = k / count, b = (k + 1) / count;
-        const s = { ax: ax + (bx - ax) * a, az: az + (bz - az) * a, bx: ax + (bx - ax) * b, bz: az + (bz - az) * b, width: road.width, name: road.name, roadId: road.id, heading: Math.atan2(ax - bx, az - bz) };
+        const s = { ax: ax + (bx - ax) * a, az: az + (bz - az) * a, bx: ax + (bx - ax) * b, bz: az + (bz - az) * b, width: roadWidth, name: road.name, roadId: road.id, heading: Math.atan2(ax - bx, az - bz) };
         const pad = s.width / 2;
         if (Math.max(s.ax, s.bx) + pad < nw.x || Math.min(s.ax, s.bx) - pad > se.x || Math.max(s.az, s.bz) + pad < nw.z || Math.min(s.az, s.bz) - pad > se.z) continue;
         segments.push(s);
@@ -121,6 +130,14 @@ export function createRoadNetwork(data) {
     const obstacle = { ...building, ring };
     const xs = ring.map(p => p[0]), zs = ring.map(p => p[1]);
     obstacles.add(obstacle, Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs));
+  }
+  // Barriers are collision geometry only when their mapped record is a closed
+  // physical obstruction. getBarrierObstacles intentionally leaves unknown
+  // gates/entrances open rather than sealing access from missing tags.
+  for (const barrier of getBarrierObstacles(data)) {
+    const xs = barrier.type === 'circle' ? [barrier.x - barrier.radius, barrier.x + barrier.radius] : barrier.ring.map(p => p[0]);
+    const zs = barrier.type === 'circle' ? [barrier.z - barrier.radius, barrier.z + barrier.radius] : barrier.ring.map(p => p[1]);
+    obstacles.add({ ...barrier, ring: barrier.type === 'polygon' ? barrier.ring : undefined }, Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs));
   }
   // Actual mapped tower nodes need a collision guard when no footprint is mapped.
   // Match the rendered model's 4.3m base, not an invented survey footprint.
@@ -164,7 +181,7 @@ export function createRoadNetwork(data) {
         hit = { clearance: d - obstacle.radius, nx: dx / (d || 1), nz: dz / (d || 1) };
       }
       hit.clearance -= radius;
-      if (hit.clearance < result.clearance) result = { ...hit, reason: obstacle.ring ? 'building' : 'clock_tower', obstacle };
+      if (hit.clearance < result.clearance) result = { ...hit, reason: obstacle.barrier ? 'barrier' : (obstacle.ring ? 'building' : 'clock_tower'), obstacle };
     }
     return { ...result, drivable: result.clearance >= -1e-9 };
   }
@@ -277,24 +294,30 @@ export function createRoadNetwork(data) {
 
 export function createGeoState(network) {
   if (network.tower) {
-    // Start on the closest viable Rajpur-Mussoorie approach, facing the
-    // mapped Ghanta Ghar node rather than an arbitrary way ordering.
+    // Start on the viable Rajpur-Mussoorie approach facing the
+    // mapped Ghanta Ghar node with a comfortable sightline distance (~22-30m)
+    // and clear forward runway.
     const tower = network.tower;
     let best = null;
     for (const segment of network.segments.filter(s => /rajpur/i.test(s.name || ''))) {
-      const projected = projectSegment(tower.x, tower.z, segment);
       const length = Math.hypot(segment.bx - segment.ax, segment.bz - segment.az);
-      for (let i = 0; i <= 24; i++) {
-        const t = clamp(projected.t + (i - 12) * 1.5 / Math.max(length, 1), 0, 1);
+      const steps = Math.max(16, Math.ceil(length / 1.5));
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
         const x = segment.ax + (segment.bx - segment.ax) * t, z = segment.az + (segment.bz - segment.az) * t;
         const towardX = tower.x - x, towardZ = tower.z - z;
+        const distance = Math.hypot(towardX, towardZ);
+        if (distance < 8 || distance > 75) continue;
         const heading = Math.atan2(-towardX, -towardZ);
         if (!network.isVehicleDrivable(x, z, heading)) continue;
-        const distance = Math.hypot(towardX, towardZ);
-        if (!best || distance < best.distance) best = { x, z, heading, speed: 0, steering: 0, distance };
+        const dot = (-Math.sin(heading) * towardX - Math.cos(heading) * towardZ) / distance;
+        if (dot < 0.99) continue;
+        // Target comfortable distance ~24-28m
+        const score = Math.abs(distance - 26);
+        if (!best || score < best.score) best = { x, z, heading, distance, score };
       }
     }
-    if (best) return { ...best, heading: Math.atan2(Math.sin(best.heading), Math.cos(best.heading)), distance: 0 };
+    if (best) return { x: best.x, z: best.z, heading: Math.atan2(Math.sin(best.heading), Math.cos(best.heading)), speed: 0, steering: 0, distance: 0 };
   }
   const target = network.tower || toLocal(DEFAULT_ORIGIN.lat + 0.0007, DEFAULT_ORIGIN.lng, network.origin);
   return network.spawnNear(target.x, target.z);
@@ -360,13 +383,6 @@ function move(state, dx, dz, targetHeading, network) {
     }
   }
 
-  // If translation was blocked but in-place yaw is clear of obstacles:
-  if (lo < 0.15 && Math.abs(yaw) > 1e-7) {
-    if (network.canVehicleMove(state.x, state.z, state.x, state.z, state.heading, targetHeading)) {
-      state.heading = targetHeading;
-    }
-  }
-
   if (originalLength > 1e-7) state.speed *= clamp(travelled / originalLength, 0, 1);
 }
 
@@ -374,7 +390,33 @@ function move(state, dx, dz, targetHeading, network) {
 export function stepGeoDriving(state, input = {}, dt = 0, network) {
   if (!Number.isFinite(dt) || dt <= 0) return state;
   if (![state.x, state.z, state.heading, state.speed, state.steering, state.distance].every(Number.isFinite)) throw new TypeError('Driving state requires finite numeric fields');
-  if (!network.isVehicleDrivable(state.x, state.z, state.heading)) { state.speed = 0; return state; }
+
+  if (!network.isVehicleDrivable(state.x, state.z, state.heading)) {
+    // Attempt gentle recovery projection if wedged close to a road corridor
+    const near = network.nearest(state.x, state.z);
+    let recovered = false;
+    if (near && near.distance <= near.width / 2 + 2.0) {
+      const toCenterX = near.x - state.x;
+      const toCenterZ = near.z - state.z;
+      const dist = Math.hypot(toCenterX, toCenterZ);
+      if (dist > 1e-4) {
+        const nx = toCenterX / dist, nz = toCenterZ / dist;
+        for (const nudge of [0.05, 0.1, 0.2, 0.4, 0.8, 1.2, 1.8]) {
+          const testX = state.x + nx * nudge, testZ = state.z + nz * nudge;
+          if (network.isVehicleDrivable(testX, testZ, state.heading)) {
+            state.x = testX; state.z = testZ;
+            recovered = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!recovered) {
+      state.speed = 0;
+      return state;
+    }
+  }
+
   const count = Math.ceil(Math.min(dt, 0.1) * 100), h = Math.min(dt, 0.1) / count;
   for (let i = 0; i < count; i++) {
     const throttle = Number(Boolean(input.forward)) - Number(Boolean(input.reverse));
@@ -390,8 +432,8 @@ export function stepGeoDriving(state, input = {}, dt = 0, network) {
     const target = turn * 0.52 / (1 + Math.abs(state.speed) / 22);
     state.steering += (target - state.steering) * (1 - Math.exp(-8 * h));
 
-    // When maneuvering from stop or blocked, use effective maneuver speed so wheels can steer out
-    const steerSpeed = (throttle !== 0 && Math.abs(state.speed) < 1.0)
+    // Bicycle kinematic yaw: reverse throttle reverses wheel yaw so backing up turns out
+    const steerSpeed = (!input.brake && throttle !== 0 && Math.abs(state.speed) < 1.0)
       ? (throttle * 1.0)
       : state.speed;
     const yaw = steerSpeed / 2.65 * Math.tan(state.steering) * h;
