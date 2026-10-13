@@ -302,9 +302,16 @@ export function createGeoState(network) {
 
 function move(state, dx, dz, targetHeading, network) {
   const originalLength = Math.hypot(dx, dz);
-  if (originalLength < 1e-7) return;
   const startX = state.x, startZ = state.z, startHeading = state.heading;
   const yaw = Math.atan2(Math.sin(targetHeading - startHeading), Math.cos(targetHeading - startHeading));
+
+  if (originalLength < 1e-7) {
+    if (Math.abs(yaw) > 1e-7 && network.canVehicleMove(startX, startZ, startX, startZ, startHeading, targetHeading)) {
+      state.heading = targetHeading;
+    }
+    return;
+  }
+
   if (network.canVehicleMove(startX, startZ, startX + dx, startZ + dz, startHeading, targetHeading)) {
     state.x += dx; state.z += dz; state.heading = targetHeading;
     state.distance += originalLength;
@@ -317,10 +324,49 @@ function move(state, dx, dz, targetHeading, network) {
     if (network.canVehicleMove(startX, startZ, startX + dx * t, startZ + dz * t, startHeading, h)) lo = t;
     else hi = t;
   }
-  const travelled = originalLength * lo;
+  let travelled = originalLength * lo;
   state.x += dx * lo; state.z += dz * lo;
   state.heading = Math.atan2(Math.sin(startHeading + yaw * lo), Math.cos(startHeading + yaw * lo));
   state.distance += travelled;
+
+  // Tangential road sliding when glancing or partially blocked
+  if (lo < 0.99) {
+    const unspent = 1 - lo;
+    const remDx = dx * unspent, remDz = dz * unspent;
+    const seg = network.nearest(state.x, state.z)?.segment;
+    if (seg) {
+      const segLen = Math.hypot(seg.bx - seg.ax, seg.bz - seg.az);
+      if (segLen > 0.01) {
+        let tx = (seg.bx - seg.ax) / segLen, tz = (seg.bz - seg.az) / segLen;
+        if (remDx * tx + remDz * tz < 0) { tx = -tx; tz = -tz; }
+        const dot = remDx * tx + remDz * tz;
+        if (dot > 1e-6) {
+          const slideDx = tx * dot, slideDz = tz * dot;
+          let sLo = 0, sHi = 1;
+          for (let k = 0; k < 6; k++) {
+            const st = (sLo + sHi) / 2;
+            if (network.canVehicleMove(state.x, state.z, state.x + slideDx * st, state.z + slideDz * st, state.heading, state.heading)) sLo = st;
+            else sHi = st;
+          }
+          if (sLo > 1e-4) {
+            state.x += slideDx * sLo;
+            state.z += slideDz * sLo;
+            const slideDist = Math.hypot(slideDx, slideDz) * sLo;
+            travelled += slideDist;
+            state.distance += slideDist;
+          }
+        }
+      }
+    }
+  }
+
+  // If translation was blocked but in-place yaw is clear of obstacles:
+  if (lo < 0.15 && Math.abs(yaw) > 1e-7) {
+    if (network.canVehicleMove(state.x, state.z, state.x, state.z, state.heading, targetHeading)) {
+      state.heading = targetHeading;
+    }
+  }
+
   if (originalLength > 1e-7) state.speed *= clamp(travelled / originalLength, 0, 1);
 }
 
@@ -332,15 +378,23 @@ export function stepGeoDriving(state, input = {}, dt = 0, network) {
   const count = Math.ceil(Math.min(dt, 0.1) * 100), h = Math.min(dt, 0.1) / count;
   for (let i = 0; i < count; i++) {
     const throttle = Number(Boolean(input.forward)) - Number(Boolean(input.reverse));
+    const isBoost = Boolean(input.boost);
+    const maxSpeed = isBoost ? 22.0 : 16.7;
+    const accelMultiplier = isBoost ? 1.35 : 1.0;
     if (input.brake) state.speed = approach(state.speed, 0, 16 * h);
     else if (throttle && throttle * state.speed < -0.05) state.speed = approach(state.speed, 0, 12 * h);
-    else if (throttle) state.speed += throttle * (throttle > 0 ? 5.2 : 3.5) * h;
+    else if (throttle) state.speed += throttle * (throttle > 0 ? 5.2 : 3.5) * accelMultiplier * h;
     else state.speed = approach(state.speed, 0, (0.85 + Math.abs(state.speed) * 0.09) * h);
-    state.speed = clamp(state.speed, -5, 16.7);
+    state.speed = clamp(state.speed, -5, maxSpeed);
     const turn = Number(Boolean(input.left)) - Number(Boolean(input.right));
     const target = turn * 0.52 / (1 + Math.abs(state.speed) / 22);
     state.steering += (target - state.steering) * (1 - Math.exp(-8 * h));
-    const yaw = state.speed / 2.65 * Math.tan(state.steering) * h;
+
+    // When maneuvering from stop or blocked, use effective maneuver speed so wheels can steer out
+    const steerSpeed = (throttle !== 0 && Math.abs(state.speed) < 1.0)
+      ? (throttle * 1.0)
+      : state.speed;
+    const yaw = steerSpeed / 2.65 * Math.tan(state.steering) * h;
     const midpoint = state.heading + yaw / 2;
     const targetHeading = Math.atan2(Math.sin(state.heading + yaw), Math.cos(state.heading + yaw));
     move(state, -Math.sin(midpoint) * state.speed * h, -Math.cos(midpoint) * state.speed * h, targetHeading, network);

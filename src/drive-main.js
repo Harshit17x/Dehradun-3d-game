@@ -5,6 +5,7 @@ import { createRoadNetwork, createGeoState } from './geo-driving.js';
 import { stepGeoDriving } from './geo-driving.js';
 import { createVehicle } from './drive-vehicle.js';
 import { createGoogleDriveOverlay } from './google-drive-overlay.js';
+import { sound } from './audio.js';
 import mappedData from './dehradun-data.json' with { type: 'json' };
 
 const canvas = document.querySelector('#scene');
@@ -230,8 +231,15 @@ function start() {
   let paused = false;
   const keyboard = new Set();
   const touch = new Map();
-  const input = { forward: false, reverse: false, left: false, right: false, brake: false };
-  const bindings = { KeyW: 'forward', ArrowUp: 'forward', KeyS: 'reverse', ArrowDown: 'reverse', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right', Space: 'brake' };
+  const input = { forward: false, reverse: false, left: false, right: false, brake: false, boost: false };
+  const bindings = {
+    KeyW: 'forward', ArrowUp: 'forward',
+    KeyS: 'reverse', ArrowDown: 'reverse',
+    KeyA: 'left', ArrowLeft: 'left',
+    KeyD: 'right', ArrowRight: 'right',
+    Space: 'brake',
+    ShiftLeft: 'boost', ShiftRight: 'boost'
+  };
   const clearInput = () => {
     keyboard.clear(); touch.clear();
     document.querySelectorAll('#touch button').forEach(button => button.classList.remove('pressed'));
@@ -255,6 +263,11 @@ function start() {
     if (snap) { camera.position.copy(cameraTarget); lookAt.copy(desiredLook); }
     else { camera.position.lerp(cameraTarget, 1 - Math.exp(-5.5 * dt)); lookAt.lerp(desiredLook, 1 - Math.exp(-9 * dt)); }
     camera.lookAt(lookAt);
+
+    // Speed-dependent field of view kick
+    const targetFov = 53 + Math.min(speed * 0.45, 11);
+    camera.fov += (targetFov - camera.fov) * Math.min(1, 8 * dt);
+    camera.updateProjectionMatrix();
   }
   function reset() {
     Object.assign(state, createGeoState(network));
@@ -262,19 +275,68 @@ function start() {
     accumulator = 0; clearInput(); vehicle.update(0, 0, 0.1, false); syncCar(); updateCamera(0, true); updateHUD();
   }
   on(window, 'keydown', event => {
+    sound.init();
     if (event.target instanceof HTMLButtonElement && ['Space', 'Enter'].includes(event.code)) return;
     if (bindings[event.code]) { event.preventDefault(); if (!paused) keyboard.add(event.code); }
     if (!event.repeat && event.code === 'KeyP') setPaused(!paused);
     if (!event.repeat && event.code === 'KeyR') reset();
+    if (!event.repeat && event.code === 'KeyH') {
+      const active = vehicle.toggleHeadlights();
+      const btn = document.querySelector('#headlights-toggle');
+      if (btn) {
+        btn.setAttribute('aria-pressed', String(active));
+        btn.textContent = active ? '💡 Lights On' : '💡 Lights Off';
+      }
+    }
   });
   on(window, 'keyup', event => keyboard.delete(event.code));
   on(window, 'blur', () => setPaused(true));
   on(document, 'visibilitychange', () => { if (document.hidden) setPaused(true); });
-  on(pauseButton, 'click', () => { setPaused(!paused); canvas.focus({ preventScroll: true }); });
-  on(document.querySelector('#reset'), 'click', () => { reset(); canvas.focus({ preventScroll: true }); });
-  on(mapToggle, 'click', () => { void setMapVisible(mapPanel.hidden, scene, state); });
+  on(pauseButton, 'click', () => { sound.init(); setPaused(!paused); canvas.focus({ preventScroll: true }); });
+  on(document.querySelector('#reset'), 'click', () => { sound.init(); reset(); canvas.focus({ preventScroll: true }); });
+  on(mapToggle, 'click', () => { sound.init(); void setMapVisible(mapPanel.hidden, scene, state); });
+
+  const audioToggle = document.querySelector('#audio-toggle');
+  if (audioToggle) {
+    on(audioToggle, 'click', () => {
+      sound.init();
+      const enabled = sound.toggle();
+      audioToggle.textContent = enabled ? '🔊 Sound On' : '🔇 Sound Off';
+      audioToggle.setAttribute('aria-pressed', String(enabled));
+    });
+  }
+
+  const headlightsToggle = document.querySelector('#headlights-toggle');
+  if (headlightsToggle) {
+    on(headlightsToggle, 'click', () => {
+      const active = vehicle.toggleHeadlights();
+      headlightsToggle.setAttribute('aria-pressed', String(active));
+      headlightsToggle.textContent = active ? '💡 Lights On' : '💡 Lights Off';
+    });
+  }
+
+  document.querySelectorAll('[data-vehicle]').forEach(btn => {
+    on(btn, 'click', () => {
+      sound.init();
+      document.querySelectorAll('[data-vehicle]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      vehicle.setVehicleModel(btn.dataset.vehicle);
+      const titleEl = document.getElementById('vehicle-title');
+      if (titleEl) titleEl.textContent = vehicle.getVehicleName();
+    });
+  });
+
+  vehicle.onModelChange((key, name) => {
+    const titleEl = document.getElementById('vehicle-title');
+    if (titleEl) titleEl.textContent = name;
+    document.querySelectorAll('[data-vehicle]').forEach(b => {
+      b.classList.toggle('active', b.dataset.vehicle === key);
+    });
+  });
+
   for (const button of document.querySelectorAll('[data-control]')) {
     on(button, 'pointerdown', event => {
+      sound.init();
       event.preventDefault(); if (paused) return;
       button.setPointerCapture(event.pointerId); touch.set(event.pointerId, button.dataset.control); button.classList.add('pressed');
     });
@@ -321,11 +383,17 @@ function start() {
       vehicle.group.position.copy(carPosition);
       const delta = Math.atan2(Math.sin(state.heading - previous.heading), Math.cos(state.heading - previous.heading));
       vehicle.group.rotation.y = previous.heading + delta * alpha;
-      vehicle.update(state.speed, state.steering, dt, input.brake || (input.reverse && state.speed > 0.1) || (input.forward && state.speed < -0.1));
+      const isBraking = input.brake || (input.reverse && state.speed > 0.1) || (input.forward && state.speed < -0.1);
+      vehicle.update(state.speed, state.steering, dt, isBraking);
       updateCamera(dt);
       googleOverlay?.update(state, dt);
+
+      // Real vehicle audio update
+      const speedKmh = Math.abs(Math.round(state.speed * 3.6));
+      sound.updateVehicleSound('rover', speedKmh, Boolean(input.forward || input.reverse));
     } else {
       accumulator = 0; previous.x = state.x; previous.z = state.z; previous.heading = state.heading;
+      sound.updateVehicleSound('rover', 0, false);
     }
     const texel = 130 / 2048;
     const sx = Math.round(state.x / texel) * texel, sz = Math.round(state.z / texel) * texel;

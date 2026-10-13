@@ -75,6 +75,10 @@
     .touch-set { display: flex; gap: 8px; }
     #touch button { border-radius: 14px; width: 54px; height: 54px; font-size: 22px; padding: 0; touch-action: none; user-select: none; -webkit-user-select: none; }
     #touch button.pressed { background: #bfd0a5; }
+    .veh-btn { border: 1px solid #c5cbb9; background: #ffffff88; color: #344b3e; border-radius: 20px; font-size: 11px; padding: 6px 12px; cursor: pointer; transition: all .15s; }
+    .veh-btn:hover { background: #fff; transform: translateY(-1px); }
+    .veh-btn.active { background: #344b3e; color: #f5f4ea; border-color: #344b3e; font-weight: 600; box-shadow: 0 2px 8px #344b3e33; }
+    .vehicle-picker { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
     @media (pointer: coarse) { #touch { display: flex; } .controls-row { display: none; } }
      @media (max-width: 850px) { #hud { padding: 20px; } #map-panel { left: 20px; bottom: 20px; width: min(320px, calc(100vw - 40px)); } .location { top: 167px; } .controls { display: none; } .brand { padding: 17px 21px; } .weather { display: none; } .top-right { flex-direction: column; align-items: flex-end; } .map-card { width: 170px; padding: 12px; } #minimap { width: 144px; height: 130px; } .telemetry { min-width: 150px; padding: 18px; } #speed { font-size: 52px; } .stats { gap: 12px; font-size: 9px; } }
      @media (max-height: 540px) { #hud { padding: 14px; } .brand { padding: 12px 18px; } h1 { font-size: 28px; } .brand p, #geo-status, .map-caption, .controls-title { display: none; } .location { top: 16px; } .map-card { width: 150px; padding: 10px; } #minimap { width: 128px; height: 100px; } .telemetry { padding: 14px 18px; } #touch { bottom: 175px; } #map-panel { bottom: 14px; } }
@@ -91,15 +95,25 @@
   <main id="hud">
     <header>
       <div class="brand"><div class="eyebrow">Uttarakhand · India</div><h1>Dehradun <span>Drive.</span></h1><p>A little closer to the hills.</p><div id="geo-status" role="status">Mapped streets + approximate facades · Google Maps when enabled.</div></div>
-       <div class="top-right"><div class="weather"><i>☀</i> Valley daylight</div><button id="map-toggle" aria-label="Show Google Maps 3D mode" aria-pressed="false">Google 3D</button><button id="pause" aria-label="Pause driving" aria-pressed="false">Ⅱ Pause</button><button id="reset" title="Return to mapped OSM roads (R)">↺ Reset</button></div>
+       <div class="top-right"><div class="weather"><i>☀</i> Valley daylight</div><button id="map-toggle" aria-label="Show Google Maps 3D mode" aria-pressed="false">Google 3D</button><button id="audio-toggle" aria-label="Toggle vehicle audio" aria-pressed="false">🔊 Sound</button><button id="headlights-toggle" aria-label="Toggle headlights" aria-pressed="true">💡 Lights</button><button id="pause" aria-label="Pause driving" aria-pressed="false">Ⅱ Pause</button><button id="reset" title="Return to mapped OSM roads (R)">↺ Reset</button></div>
     </header>
     <section class="location" aria-label="Current road"><div class="eyebrow">Free drive · <span id="heading">N</span></div><div id="road-name">Rajpur Road</div></section>
     <section id="status" role="status"><h2>Welcome to the valley.</h2><p>Building your streetscape…</p></section>
     <div id="touch" aria-label="Touch driving controls"><div class="touch-set"><button data-control="left" aria-label="Steer left">←</button><button data-control="right" aria-label="Steer right">→</button></div><div class="touch-set"><button data-control="reverse" aria-label="Brake or reverse">↓</button><button data-control="forward" aria-label="Accelerate">↑</button></div></div>
     <footer class="bottom">
       <section class="map-card" aria-label="Mapped street map"><div class="map-title"><span class="eyebrow">Mapped Doon Valley</span><span>N ↑</span></div><canvas id="minimap" width="372" height="332" aria-label="Minimap showing the car and mapped OSM roads"></canvas><div class="map-caption">OSM ROADS · APPROXIMATE FACADES · GOOGLE WHEN ENABLED</div></section>
-      <section class="controls" aria-label="Driving controls"><div class="controls-title">Open roads. No rush. Keep left.</div><div class="controls-row"><div class="key-group"><kbd>W</kbd><kbd>S</kbd> Drive / reverse</div><div class="key-group"><kbd>A</kbd><kbd>D</kbd> Steer</div><div class="key-group"><kbd>Space</kbd> Brake</div><div class="key-group">or arrow keys</div></div></section>
-      <section class="telemetry" aria-label="Driving telemetry"><div class="eyebrow">Ember GT</div><div class="speed-row"><span id="speed">0</span><span class="speed-unit">KM/H</span></div><div class="speed-line"><div id="speed-fill"></div></div><div class="stats"><span id="gear">N</span><span id="distance">0.00 km</span><span id="fps">— fps</span></div></section>
+      <section class="controls" aria-label="Driving controls"><div class="controls-title">Open roads. No rush. Keep left.</div><div class="controls-row"><div class="key-group"><kbd>W</kbd><kbd>S</kbd> Drive / Rev</div><div class="key-group"><kbd>A</kbd><kbd>D</kbd> Steer</div><div class="key-group"><kbd>Shift</kbd> Turbo</div><div class="key-group"><kbd>H</kbd> Lights</div><div class="key-group"><kbd>Space</kbd> Brake</div></div></section>
+      <section class="telemetry" aria-label="Driving telemetry">
+        <div class="eyebrow" id="vehicle-title">2024 BMW M4 Competition</div>
+        <div class="vehicle-picker" aria-label="Vehicle selection">
+          <button class="veh-btn active" data-vehicle="bmw" title="2024 BMW M4 Coupe Competition">🏎️ BMW M4</button>
+          <button class="veh-btn" data-vehicle="police" title="Uttarakhand Police Interceptor">🚓 Police</button>
+          <button class="veh-btn" data-vehicle="ember" title="Ember GT Prototype">⚡ Ember</button>
+        </div>
+        <div class="speed-row"><span id="speed">0</span><span class="speed-unit">KM/H</span></div>
+        <div class="speed-line"><div id="speed-fill"></div></div>
+        <div class="stats"><span id="gear">N</span><span id="distance">0.00 km</span><span id="fps">— fps</span></div>
+      </section>
     </footer>
   </main>
   <script type="module" src="/src/drive-main.js"></script>

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /** One car, facing local -Z. Steering is a signed front-wheel angle in radians. */
 export function createVehicle() {
@@ -201,8 +202,184 @@ export function createVehicle() {
   }
 
   let disposed = false;
+  let currentModelKey = 'ember';
+  let activeGltfModel = null;
+  const modelCache = new Map();
+  const modelContainer = new THREE.Group();
+  modelContainer.name = 'GLTF-Vehicle-Model';
+  group.add(modelContainer);
+
+  // Dynamic Headlights (illuminates roads and buildings in evening/night)
+  const headlightGroup = new THREE.Group();
+  headlightGroup.name = 'vehicle-headlights';
+  const spotL = new THREE.SpotLight(0xfff6e6, 3.8, 120, Math.PI / 4.8, 0.35, 1.2);
+  spotL.position.set(-0.68, 0.72, -2.15);
+  spotL.target.position.set(-0.68, 0.05, -45);
+  const spotR = new THREE.SpotLight(0xfff6e6, 3.8, 120, Math.PI / 4.8, 0.35, 1.2);
+  spotR.position.set(0.68, 0.72, -2.15);
+  spotR.target.position.set(0.68, 0.05, -45);
+  headlightGroup.add(spotL, spotL.target, spotR, spotR.target);
+
+  // Soft forward ambient beam
+  const beamFill = new THREE.PointLight(0xffedd5, 1.2, 14);
+  beamFill.position.set(0, 0.7, -2.3);
+  headlightGroup.add(beamFill);
+  group.add(headlightGroup);
+
+  const VEHICLE_DEFS = {
+    bmw: {
+      name: '2024 BMW M4 Coupe Competition',
+      url: '/models/2024_bmw_m4_coupe_competition.glb',
+      targetLen: 4.5,
+      rotY: Math.PI, // The BMW GLTF model faces +Z; rotating by 180° aligns with driving forward direction -Z
+      yOffset: 0.0,
+      badge: '🏎️ BMW M4'
+    },
+    police: {
+      name: 'Uttarakhand Police Interceptor',
+      url: '/models/police_car_low_poly.glb',
+      targetLen: 4.35,
+      rotY: 0,
+      yOffset: 0.0,
+      badge: '🚓 Police'
+    },
+    ember: {
+      name: 'Ember GT Concept',
+      url: null,
+      targetLen: 4.4,
+      rotY: 0,
+      yOffset: 0.0,
+      badge: '⚡ Ember GT'
+    }
+  };
+
+  let onModelChangeListeners = [];
+
+  function loadGltfModel(key) {
+    if (typeof window === 'undefined') return;
+    const def = VEHICLE_DEFS[key];
+    if (!def || !def.url) {
+      applyModel('ember', null);
+      return;
+    }
+
+    if (modelCache.has(key)) {
+      applyModel(key, modelCache.get(key));
+      return;
+    }
+
+    try {
+      const loader = new GLTFLoader();
+      loader.load(
+        def.url,
+        (gltf) => {
+          if (disposed) return;
+          const root = gltf.scene;
+
+          // Wrap root in dedicated pivot group
+          const wrapper = new THREE.Group();
+          wrapper.name = `${key}-wrapper`;
+          wrapper.add(root);
+
+          // Apply rotation to face forward (local -Z)
+          root.rotation.y = def.rotY || 0;
+          root.updateMatrixWorld(true);
+
+          // Measure size of oriented model
+          const box = new THREE.Box3().setFromObject(wrapper);
+          const size = box.getSize(new THREE.Vector3());
+          const modelLength = size.z > 0.5 ? size.z : size.x;
+          const scale = def.targetLen / (modelLength || 1);
+          root.scale.setScalar(scale);
+          root.updateMatrixWorld(true);
+
+          // Re-measure after scale and precisely center (X=0, Z=0) with bottom at y=0
+          const scaledBox = new THREE.Box3().setFromObject(wrapper);
+          const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+
+          root.position.x = -scaledCenter.x;
+          root.position.y = -scaledBox.min.y + (def.yOffset || 0);
+          root.position.z = -scaledCenter.z;
+          root.updateMatrixWorld(true);
+
+          root.traverse((child) => {
+            if (child.isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+              if (child.material) {
+                if (child.material.isMeshStandardMaterial || child.material.isMeshPhysicalMaterial) {
+                  child.material.envMapIntensity = 1.35;
+                }
+              }
+            }
+          });
+
+          modelCache.set(key, wrapper);
+          applyModel(key, wrapper);
+        },
+        undefined,
+        (err) => {
+          console.warn(`[Vehicle] Could not load ${def.name}:`, err);
+        }
+      );
+    } catch (err) {
+      console.warn('[Vehicle] GLTFLoader error:', err);
+    }
+  }
+
+  function applyModel(key, modelGroup) {
+    if (disposed) return;
+    const def = VEHICLE_DEFS[key] || VEHICLE_DEFS.ember;
+    currentModelKey = key;
+    group.name = def.name;
+
+    modelContainer.clear();
+    if (modelGroup) {
+      modelContainer.add(modelGroup);
+      modelGroup.visible = true;
+      activeGltfModel = modelGroup;
+    } else {
+      activeGltfModel = null;
+    }
+
+    if (key === 'ember') {
+      body.visible = true;
+      for (const w of wheels) w.pivot.visible = true;
+    } else {
+      // 3D model active: hide procedural body AND hide procedural wheels
+      body.visible = false;
+      for (const w of wheels) w.pivot.visible = false;
+    }
+
+    onModelChangeListeners.forEach(fn => fn(currentModelKey, def.name));
+    console.log(`[Vehicle] Successfully active: ${def.name}`);
+  }
+
+  // In browser, default to real 3D BMW M4 Coupe Competition
+  if (typeof window !== 'undefined') {
+    setTimeout(() => {
+      loadGltfModel('bmw');
+    }, 10);
+  }
+
   return {
     group,
+    setVehicleModel(key) {
+      loadGltfModel(key);
+    },
+    getVehicleName() {
+      return VEHICLE_DEFS[currentModelKey]?.name || group.name;
+    },
+    getCurrentModelKey() {
+      return currentModelKey;
+    },
+    onModelChange(fn) {
+      onModelChangeListeners.push(fn);
+    },
+    toggleHeadlights(enabled) {
+      headlightGroup.visible = enabled !== undefined ? enabled : !headlightGroup.visible;
+      return headlightGroup.visible;
+    },
     update(speed = 0, steering = 0, dt = 0, braking = false) {
       if (disposed) return;
       const seconds = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0;
@@ -218,6 +395,12 @@ export function createVehicle() {
       body.rotation.z += (roll - body.rotation.z) * blend;
       const pitch = braking && Math.abs(velocity) > 0.2 ? -Math.sign(velocity) * 0.012 : 0;
       body.rotation.x += (pitch - body.rotation.x) * blend;
+
+      if (activeGltfModel && activeGltfModel.visible) {
+        activeGltfModel.rotation.z += (roll - activeGltfModel.rotation.z) * blend;
+        activeGltfModel.rotation.x += (pitch - activeGltfModel.rotation.x) * blend;
+      }
+
       taillamp.emissiveIntensity = braking ? 3.8 : 0.7;
     },
     dispose() {
@@ -226,9 +409,20 @@ export function createVehicle() {
       group.removeFromParent();
       for (const geometry of geometries) geometry.dispose();
       for (const mat of materials) mat.dispose();
+      for (const [, root] of modelCache) {
+        root.traverse(child => {
+          if (child.isMesh) {
+            child.geometry?.dispose();
+            if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+            else child.material?.dispose();
+          }
+        });
+      }
+      modelCache.clear();
       group.clear();
       geometries.clear();
       materials.clear();
+      onModelChangeListeners = [];
     },
   };
 }

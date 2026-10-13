@@ -381,10 +381,10 @@ export class PlayerController {
   }
 
   updateRover(delta, time) {
-    const maxSpeed = this.keys.boost ? 48 : 28;
-    const accelRate = 22;
-    const brakeRate = 32;
-    const turnRate = 2.5;
+    const maxSpeed = this.keys.boost ? 52 : 30;
+    const accelRate = this.keys.boost ? 28 : 22;
+    const brakeRate = 35;
+    const turnRate = 2.8;
 
     if (this.keys.forward) {
       this.roverSpeed = Math.min(maxSpeed, this.roverSpeed + accelRate * delta);
@@ -394,16 +394,27 @@ export class PlayerController {
       this.roverSpeed *= Math.max(0, 1 - 2.8 * delta);
     }
 
-    if (Math.abs(this.roverSpeed) > 0.1) {
-      const dirSign = this.roverSpeed > 0 ? 1 : -1;
-      if (this.keys.left) this.roverHeading += turnRate * dirSign * delta;
-      if (this.keys.right) this.roverHeading -= turnRate * dirSign * delta;
+    // Speed-sensitive steering with low-speed maneuverability
+    const speedMagnitude = Math.abs(this.roverSpeed);
+    const steerFactor = 1 / (1 + speedMagnitude / 26);
+    const dirSign = this.roverSpeed >= 0 ? 1 : -1;
+
+    if (this.keys.left) {
+      const maneuverSpeed = Math.max(speedMagnitude, 2.5);
+      this.roverHeading += turnRate * dirSign * steerFactor * (maneuverSpeed / Math.max(speedMagnitude, 1)) * delta;
+    }
+    if (this.keys.right) {
+      const maneuverSpeed = Math.max(speedMagnitude, 2.5);
+      this.roverHeading -= turnRate * dirSign * steerFactor * (maneuverSpeed / Math.max(speedMagnitude, 1)) * delta;
     }
 
     const moveDist = this.roverSpeed * delta;
     this.roverPos.x -= Math.sin(this.roverHeading) * moveDist;
     this.roverPos.z -= Math.cos(this.roverHeading) * moveDist;
-    this.roverPos.y = this.terrain.getHeight(this.roverPos.x, this.roverPos.z);
+
+    // Damped suspension spring smoothing to eliminate terrain elevation jitter
+    const targetY = this.terrain.getHeight(this.roverPos.x, this.roverPos.z) + 0.12;
+    this.roverPos.y = THREE.MathUtils.lerp(this.roverPos.y, targetY, Math.min(1, 14 * delta));
 
     const normal = this.terrain.getNormal(this.roverPos.x, this.roverPos.z);
     const forward = new THREE.Vector3(-Math.sin(this.roverHeading), 0, -Math.cos(this.roverHeading));
@@ -413,20 +424,24 @@ export class PlayerController {
     const rotMatrix = new THREE.Matrix4().makeBasis(right, normal, correctedForward.negate());
     const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMatrix);
 
-    this.roverMesh.quaternion.slerp(targetQuat, 0.22);
+    this.roverMesh.quaternion.slerp(targetQuat, Math.min(1, 12 * delta));
     this.roverMesh.position.copy(this.roverPos);
 
-    // Dynamic chase camera following BMW M4
-    const camOffset = new THREE.Vector3(0, 3.8, 10.5);
+    // Dynamic chase camera following BMW M4 with speed-dependent look-ahead
+    const behindDist = 10.2 + speedMagnitude * 0.06;
+    const heightOffset = 3.8 + speedMagnitude * 0.02;
+    const camOffset = new THREE.Vector3(0, heightOffset, behindDist);
     camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.roverHeading);
     const targetCamPos = this.roverPos.clone().add(camOffset);
 
-    this.camera.position.lerp(targetCamPos, 0.2);
-    const lookAtTarget = this.roverPos.clone().add(new THREE.Vector3(0, 1.4, 0));
+    this.camera.position.lerp(targetCamPos, Math.min(1, 9 * delta));
+    const lookAtTarget = this.roverPos.clone()
+      .add(new THREE.Vector3(0, 1.35, 0))
+      .sub(forward.clone().multiplyScalar(3.5));
     this.camera.lookAt(lookAtTarget);
 
     const speedKmh = Math.abs(Math.round(this.roverSpeed * 3.6));
-    sound.updateVehicleSound('rover', speedKmh, this.keys.forward);
+    sound.updateVehicleSound('rover', speedKmh, Boolean(this.keys.forward || this.keys.backward));
   }
 
   updateOrbit(delta) {
