@@ -1,7 +1,12 @@
 // Geographic simulation: metres, radians, seconds. Heading zero is north (-z),
 // positive heading turns left. Rendering-independent; all geometry is supplied.
 export const DEFAULT_ORIGIN = { lat: 30.32448, lng: 78.04187 };
-const R = 6378137, DEG = Math.PI / 180, CELL = 24, CAR_RADIUS = 1.1;
+const R = 6378137, DEG = Math.PI / 180, CELL = 24;
+const CAR_RADIUS = 1.1;
+const VEHICLE_RADIUS = 1.12;
+const VEHICLE_HALF_LENGTH = 1.1;
+const TOWER_RADIUS = 4.3;
+const TOWER_RE = /ghanta[\s_-]*ghar|clock[\s_-]*tower|घंटा\s*घर/i;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const approach = (v, target, amount) => v + clamp(target - v, -amount, amount);
 export function toLocal(lat, lng, origin = DEFAULT_ORIGIN) {
@@ -17,7 +22,22 @@ export function projectSegment(x, z, segment) {
   const px = ax + dx * t, pz = az + dz * t;
   return { x: px, z: pz, distance: Math.hypot(x - px, z - pz), t };
 }
+function normalizeRing(ring) {
+  if (!Array.isArray(ring)) return [];
+  const result = [];
+  for (const point of ring) {
+    if (!Array.isArray(point) || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) continue;
+    if (!result.length || Math.hypot(point[0] - result.at(-1)[0], point[1] - result.at(-1)[1]) > 1e-9) {
+      result.push([point[0], point[1]]);
+    }
+  }
+  if (result.length > 1 && Math.hypot(result[0][0] - result.at(-1)[0], result[0][1] - result.at(-1)[1]) <= 1e-9) result.pop();
+  return result;
+}
+
 export function pointInRing(x, z, ring) {
+  ring = normalizeRing(ring);
+  if (ring.length < 3) return false;
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const [ax, az] = ring[i], [bx, bz] = ring[j];
@@ -26,9 +46,11 @@ export function pointInRing(x, z, ring) {
   return inside;
 }
 function ringDistance(x, z, ring) {
+  ring = normalizeRing(ring);
   let best = { distance: Infinity, x, z };
-  for (let i = 0; i < ring.length - 1; i++) {
-    const hit = projectSegment(x, z, { ax: ring[i][0], az: ring[i][1], bx: ring[i + 1][0], bz: ring[i + 1][1] });
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const hit = projectSegment(x, z, { ax: a[0], az: a[1], bx: b[0], bz: b[1] });
     if (hit.distance < best.distance) best = hit;
   }
   const inside = pointInRing(x, z, ring);
@@ -94,13 +116,17 @@ export function createRoadNetwork(data) {
     }
   }
   for (const building of data.buildings || []) {
-    const xs = building.ring.map(p => p[0]), zs = building.ring.map(p => p[1]);
-    obstacles.add(building, Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs));
+    const ring = normalizeRing(building.ring);
+    if (ring.length < 3) continue;
+    const obstacle = { ...building, ring };
+    const xs = ring.map(p => p[0]), zs = ring.map(p => p[1]);
+    obstacles.add(obstacle, Math.min(...xs), Math.min(...zs), Math.max(...xs), Math.max(...zs));
   }
   // Actual mapped tower nodes need a collision guard when no footprint is mapped.
-  // This conservative 3m radius is simulation clearance, not claimed OSM geometry.
-  const towers = (data.places || []).filter(p => p.kind === 'clock_tower');
-  for (const p of towers) obstacles.add({ ...p, radius: 3 }, p.x - 3, p.z - 3, p.x + 3, p.z + 3);
+  // Match the rendered model's 4.3m base, not an invented survey footprint.
+  const towers = (data.places || []).filter(p => Number.isFinite(p.x) && Number.isFinite(p.z) && TOWER_RE.test(`${p.name || ''} ${p.kind || ''} ${p.type || ''}`));
+  const tower = towers[0] ? { ...towers[0], radius: TOWER_RADIUS } : null;
+  for (const p of towers) obstacles.add({ ...p, radius: TOWER_RADIUS }, p.x - TOWER_RADIUS, p.z - TOWER_RADIUS, p.x + TOWER_RADIUS, p.z + TOWER_RADIUS);
   if (!segments.length) throw new Error('No drivable OSM roads within map bounds');
   function nearest(x, z) {
     if (![x, z].every(Number.isFinite)) return null;
@@ -122,7 +148,7 @@ export function createRoadNetwork(data) {
   function collisionAt(x, z, radius = CAR_RADIUS) {
     if (![x, z, radius].every(Number.isFinite) || radius < 0) return { drivable: false, clearance: -Infinity, nx: 0, nz: 0, reason: 'invalid' };
     let result = { clearance: -Infinity, nx: 0, nz: 0, reason: 'road' };
-    for (const s of roads.near(x, z)) {
+    for (const s of roads.near(x, z, radius + 0.5)) {
       const p = projectSegment(x, z, s), clearance = s.width / 2 - p.distance - radius;
       if (clearance > result.clearance) result = { clearance, nx: (p.x - x) / (p.distance || 1), nz: (p.z - z) / (p.distance || 1), reason: 'road', segment: s };
     }
@@ -143,34 +169,95 @@ export function createRoadNetwork(data) {
     return { ...result, drivable: result.clearance >= -1e-9 };
   }
   const isDrivable = (x, z, radius = CAR_RADIUS) => collisionAt(x, z, radius).drivable;
-  function canMove(ax, az, bx, bz, radius = CAR_RADIUS) {
-    if (!isDrivable(ax, az, radius) || !isDrivable(bx, bz, radius)) return false;
-    const candidates = roads.near(ax, az, Math.hypot(bx - ax, bz - az));
-    // A capsule is convex: containment of both endpoints proves containment of
-    // the complete swept footprint. Subdivision joins overlapping capsules only.
-    const covered = (x1, z1, x2, z2, depth = 0) => {
-      if (candidates.some(s => Math.max(projectSegment(x1, z1, s).distance, projectSegment(x2, z2, s).distance) <= s.width / 2 - radius + 1e-9)) return true;
-      if (depth >= 10) return false;
-      const mx = (x1 + x2) / 2, mz = (z1 + z2) / 2;
-      if (!candidates.some(s => projectSegment(mx, mz, s).distance <= s.width / 2 - radius)) return false;
-      return covered(x1, z1, mx, mz, depth + 1) && covered(mx, mz, x2, z2, depth + 1);
-    };
-    if (!covered(ax, az, bx, bz)) return false;
+  function obstacleIntersectsPath(ax, az, bx, bz, radius, obstacle) {
     const path = { ax, az, bx, bz };
-    for (const obstacle of obstacles.near(ax, az, radius + Math.hypot(bx - ax, bz - az))) {
-      if (!obstacle.ring) {
-        if (projectSegment(obstacle.x, obstacle.z, path).distance < radius + obstacle.radius - 1e-9) return false;
-      } else {
-        for (let i = 1; i < obstacle.ring.length; i++) {
-          const [ex, ez] = obstacle.ring[i - 1], [fx, fz] = obstacle.ring[i];
-          if (segmentDistance(path, { ax: ex, az: ez, bx: fx, bz: fz }) < radius - 1e-9) return false;
+    if (!obstacle.ring) return projectSegment(obstacle.x, obstacle.z, path).distance < radius + obstacle.radius - 1e-9;
+    if (pointInRing(ax, az, obstacle.ring) || pointInRing(bx, bz, obstacle.ring)) return true;
+    for (let i = 0; i < obstacle.ring.length; i++) {
+      const a = obstacle.ring[i], b = obstacle.ring[(i + 1) % obstacle.ring.length];
+      if (segmentDistance(path, { ax: a[0], az: a[1], bx: b[0], bz: b[1] }) < radius - 1e-9) return true;
+    }
+    return false;
+  }
+  function roadCovers(points, radius, candidates, depth = 0) {
+    if (candidates.some(s => points.every(p => projectSegment(p.x, p.z, s).distance <= s.width / 2 - radius + 1e-9))) return true;
+    if (depth >= 12) return false;
+    if (points.length === 2) {
+      const [a, b] = points, m = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+      if (!candidates.some(s => projectSegment(m.x, m.z, s).distance <= s.width / 2 - radius + 1e-9)) return false;
+      return roadCovers([a, m], radius, candidates, depth + 1) && roadCovers([m, b], radius, candidates, depth + 1);
+    }
+    // Convex triangles prove swept interior coverage, including at junctions.
+    const [a, b, c] = points;
+    const ab = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 };
+    const bc = { x: (b.x + c.x) / 2, z: (b.z + c.z) / 2 };
+    const ca = { x: (c.x + a.x) / 2, z: (c.z + a.z) / 2 };
+    if (![ab, bc, ca].every(p => candidates.some(s => projectSegment(p.x, p.z, s).distance <= s.width / 2 - radius + 1e-9))) return false;
+    return [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]].every(triangle => roadCovers(triangle, radius, candidates, depth + 1));
+  }
+  function circlePathClear(ax, az, bx, bz, radius) {
+    if (!isDrivable(ax, az, radius) || !isDrivable(bx, bz, radius)) return false;
+    const length = Math.hypot(bx - ax, bz - az);
+    if (!roadCovers([{ x: ax, z: az }, { x: bx, z: bz }], radius, roads.near((ax + bx) / 2, (az + bz) / 2, length / 2 + radius))) return false;
+    const candidates = obstacles.near((ax + bx) / 2, (az + bz) / 2, length / 2 + radius + 1);
+    return !candidates.some(obstacle => obstacleIntersectsPath(ax, az, bx, bz, radius, obstacle));
+  }
+  function canMove(ax, az, bx, bz, radius = CAR_RADIUS) {
+    return circlePathClear(ax, az, bx, bz, radius);
+  }
+  function vehicleCenters(x, z, heading) {
+    const sx = Math.sin(heading) * VEHICLE_HALF_LENGTH, sz = Math.cos(heading) * VEHICLE_HALF_LENGTH;
+    return [{ x: x - sx, z: z - sz }, { x: x + sx, z: z + sz }];
+  }
+  function vehicleAt(x, z, heading) {
+    if (![x, z, heading].every(Number.isFinite)) return false;
+    const [a, b] = vehicleCenters(x, z, heading);
+    // The centreline is part of the capsule, so it must remain on one
+    // continuous drivable corridor too; this rejects disconnected road jumps.
+    return circlePathClear(a.x, a.z, b.x, b.z, VEHICLE_RADIUS);
+  }
+  const isVehicleDrivable = vehicleAt;
+  function canVehicleMove(ax, az, bx, bz, heading, endHeading = heading) {
+    if (![ax, az, bx, bz, heading, endHeading].every(Number.isFinite)) return false;
+    if (!vehicleAt(ax, az, heading) || !vehicleAt(bx, bz, endHeading)) return false;
+    const turn = Math.atan2(Math.sin(endHeading - heading), Math.cos(endHeading - heading));
+    const length = Math.hypot(bx - ax, bz - az) + VEHICLE_HALF_LENGTH * Math.abs(turn);
+    const steps = Math.max(1, Math.ceil(length / 0.12));
+    const obstaclesOnPath = obstacles.near((ax + bx) / 2, (az + bz) / 2, Math.hypot(bx - ax, bz - az) / 2 + VEHICLE_HALF_LENGTH + VEHICLE_RADIUS + 1);
+    let previous = { x: ax, z: az, heading };
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const current = { x: ax + (bx - ax) * t, z: az + (bz - az) * t, heading: heading + turn * t };
+      if (!vehicleAt(current.x, current.z, current.heading)) return false;
+      const before = vehicleCenters(previous.x, previous.z, previous.heading);
+      const after = vehicleCenters(current.x, current.z, current.heading);
+      // Every intermediate centreline lies in the convex hull of these four
+      // endpoints, expanded by the circular-arc sagitta. This covers both yaw
+      // and translation (including the sides between the endpoint circles).
+      const radius = VEHICLE_RADIUS + VEHICLE_HALF_LENGTH * (1 - Math.cos(turn / steps / 2));
+      const points = [...before, ...after];
+      const candidates = roads.near(current.x, current.z, VEHICLE_HALF_LENGTH + radius + length / steps);
+      // All four triangles cover the convex hull even when rotation crosses
+      // the endpoint trajectories. Testing all six edges covers its boundary.
+      for (const indices of [[0, 1, 2], [0, 1, 3], [0, 2, 3], [1, 2, 3]]) {
+        if (!roadCovers(indices.map(k => points[k]), radius, candidates)) return false;
+      }
+      for (const p of points) {
+        if (p.x - radius < nw.x || p.x + radius > se.x || p.z - radius < nw.z || p.z + radius > se.z) return false;
+      }
+      for (let a = 0; a < points.length; a++) {
+        for (let b = a + 1; b < points.length; b++) {
+          if (obstaclesOnPath.some(obstacle => obstacleIntersectsPath(points[a].x, points[a].z, points[b].x, points[b].z, radius, obstacle))) return false;
         }
       }
+      previous = current;
     }
     return true;
   }
-  function spawnNear(x, z) {
-    const ranked = segments.map(s => ({ s, p: projectSegment(x, z, s) })).sort((a, b) => a.p.distance - b.p.distance);
+  function spawnNear(x, z, options = {}) {
+    const namePattern = options.roadName instanceof RegExp ? options.roadName : options.roadName ? new RegExp(String(options.roadName), 'i') : null;
+    const pool = namePattern ? segments.filter(s => namePattern.test(s.name || '')) : segments;
+    const ranked = pool.map(s => ({ s, p: projectSegment(x, z, s) })).sort((a, b) => a.p.distance - b.p.distance);
     for (const { s, p } of ranked) {
       // First try exact projection, then offsets away from mapped building edges.
       for (const t of [p.t, 0.5, 0.25, 0.75, 0, 1]) {
@@ -178,54 +265,70 @@ export function createRoadNetwork(data) {
         const len = Math.hypot(s.bx - s.ax, s.bz - s.az), nx = -(s.bz - s.az) / len, nz = (s.bx - s.ax) / len;
         for (const offset of [0, -0.5, 0.5, -1, 1]) {
           const sx = px + nx * offset, sz = pz + nz * offset;
-          if (isDrivable(sx, sz)) return { x: sx, z: sz, heading: s.heading, speed: 0, steering: 0, distance: 0 };
+          const heading = Number.isFinite(options.heading) ? options.heading : s.heading;
+          if (isVehicleDrivable(sx, sz, heading)) return { x: sx, z: sz, heading, speed: 0, steering: 0, distance: 0 };
         }
       }
     }
     throw new Error('No collision-free spawn in the supplied road network');
   }
-  return { segments, nearest, isDrivable, spawnNear, collisionAt, canMove, bounds: { minX: nw.x, minZ: nw.z, maxX: se.x, maxZ: se.z }, origin };
+  return { segments, nearest, isDrivable, isVehicleDrivable, spawnNear, collisionAt, canMove, canVehicleMove, tower, bounds: { minX: nw.x, minZ: nw.z, maxX: se.x, maxZ: se.z }, origin };
 }
 
 export function createGeoState(network) {
-  const target = toLocal(DEFAULT_ORIGIN.lat + 0.0007, DEFAULT_ORIGIN.lng, network.origin);
-  const state = network.spawnNear(target.x, target.z);
-  // Orient along the mapped north approach, towards north rather than OSM way order.
-  if (Math.cos(state.heading) < 0) state.heading = Math.atan2(Math.sin(state.heading + Math.PI), Math.cos(state.heading + Math.PI));
-  return state;
+  if (network.tower) {
+    // Start on the closest viable Rajpur-Mussoorie approach, facing the
+    // mapped Ghanta Ghar node rather than an arbitrary way ordering.
+    const tower = network.tower;
+    let best = null;
+    for (const segment of network.segments.filter(s => /rajpur/i.test(s.name || ''))) {
+      const projected = projectSegment(tower.x, tower.z, segment);
+      const length = Math.hypot(segment.bx - segment.ax, segment.bz - segment.az);
+      for (let i = 0; i <= 24; i++) {
+        const t = clamp(projected.t + (i - 12) * 1.5 / Math.max(length, 1), 0, 1);
+        const x = segment.ax + (segment.bx - segment.ax) * t, z = segment.az + (segment.bz - segment.az) * t;
+        const towardX = tower.x - x, towardZ = tower.z - z;
+        const heading = Math.atan2(-towardX, -towardZ);
+        if (!network.isVehicleDrivable(x, z, heading)) continue;
+        const distance = Math.hypot(towardX, towardZ);
+        if (!best || distance < best.distance) best = { x, z, heading, speed: 0, steering: 0, distance };
+      }
+    }
+    if (best) return { ...best, heading: Math.atan2(Math.sin(best.heading), Math.cos(best.heading)), distance: 0 };
+  }
+  const target = network.tower || toLocal(DEFAULT_ORIGIN.lat + 0.0007, DEFAULT_ORIGIN.lng, network.origin);
+  return network.spawnNear(target.x, target.z);
 }
 
-function move(state, dx, dz, network) {
+function move(state, dx, dz, targetHeading, network) {
   const originalLength = Math.hypot(dx, dz);
-  let travelled = 0;
-  for (let slide = 0; slide < 2; slide++) {
-    const x = state.x, z = state.z;
-    if (Math.hypot(dx, dz) < 1e-7) break;
-    if (network.canMove(x, z, x + dx, z + dz)) {
-      state.x += dx; state.z += dz; travelled += Math.hypot(dx, dz); break;
-    }
-    let lo = 0, hi = 1;
-    for (let k = 0; k < 9; k++) {
-      const t = (lo + hi) / 2;
-      if (network.canMove(x, z, x + dx * t, z + dz * t)) lo = t;
-      else hi = t;
-    }
-    const hit = network.collisionAt(x + dx * hi, z + dz * hi);
-    state.x += dx * lo; state.z += dz * lo;
-    travelled += Math.hypot(dx, dz) * lo;
-    dx *= 1 - lo; dz *= 1 - lo;
-    const inward = Math.min(0, dx * hit.nx + dz * hit.nz);
-    dx -= inward * hit.nx; dz -= inward * hit.nz;
+  if (originalLength < 1e-7) return;
+  const startX = state.x, startZ = state.z, startHeading = state.heading;
+  const yaw = Math.atan2(Math.sin(targetHeading - startHeading), Math.cos(targetHeading - startHeading));
+  if (network.canVehicleMove(startX, startZ, startX + dx, startZ + dz, startHeading, targetHeading)) {
+    state.x += dx; state.z += dz; state.heading = targetHeading;
+    state.distance += originalLength;
+    return;
   }
+  let lo = 0, hi = 1;
+  for (let k = 0; k < 8; k++) {
+    const t = (lo + hi) / 2;
+    const h = startHeading + yaw * t;
+    if (network.canVehicleMove(startX, startZ, startX + dx * t, startZ + dz * t, startHeading, h)) lo = t;
+    else hi = t;
+  }
+  const travelled = originalLength * lo;
+  state.x += dx * lo; state.z += dz * lo;
+  state.heading = Math.atan2(Math.sin(startHeading + yaw * lo), Math.cos(startHeading + yaw * lo));
   state.distance += travelled;
   if (originalLength > 1e-7) state.speed *= clamp(travelled / originalLength, 0, 1);
 }
 
-/** Smooth bicycle dynamics; bounded dt and <=0.2m exact swept-circle movement. */
+/** Smooth bicycle dynamics; bounded dt and conservative swept-capsule movement. */
 export function stepGeoDriving(state, input = {}, dt = 0, network) {
   if (!Number.isFinite(dt) || dt <= 0) return state;
   if (![state.x, state.z, state.heading, state.speed, state.steering, state.distance].every(Number.isFinite)) throw new TypeError('Driving state requires finite numeric fields');
-  if (!network.isDrivable(state.x, state.z)) { state.speed = 0; return state; }
+  if (!network.isVehicleDrivable(state.x, state.z, state.heading)) { state.speed = 0; return state; }
   const count = Math.ceil(Math.min(dt, 0.1) * 100), h = Math.min(dt, 0.1) / count;
   for (let i = 0; i < count; i++) {
     const throttle = Number(Boolean(input.forward)) - Number(Boolean(input.reverse));
@@ -239,8 +342,8 @@ export function stepGeoDriving(state, input = {}, dt = 0, network) {
     state.steering += (target - state.steering) * (1 - Math.exp(-8 * h));
     const yaw = state.speed / 2.65 * Math.tan(state.steering) * h;
     const midpoint = state.heading + yaw / 2;
-    move(state, -Math.sin(midpoint) * state.speed * h, -Math.cos(midpoint) * state.speed * h, network);
-    state.heading = Math.atan2(Math.sin(state.heading + yaw), Math.cos(state.heading + yaw));
+    const targetHeading = Math.atan2(Math.sin(state.heading + yaw), Math.cos(state.heading + yaw));
+    move(state, -Math.sin(midpoint) * state.speed * h, -Math.cos(midpoint) * state.speed * h, targetHeading, network);
   }
   return state;
 }

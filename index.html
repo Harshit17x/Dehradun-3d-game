@@ -4,20 +4,38 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#edf0e5">
-  <meta name="description" content="A peaceful, single-car driving experience through a stylised Dehradun street grid, beneath the Mussoorie foothills. Entirely procedural Three.js scenery.">
+  <meta name="description" content="A peaceful, single-car geographic driving experience through mapped Dehradun streets, with optional Google Maps comparison.">
   <title>Dehradun Drive — A little closer to the hills</title>
   <style>
     :root { font-family: 'Avenir Next', Avenir, 'Segoe UI', sans-serif; color: #253c35; background: #cbd8d6; font-synthesis: none; }
     * { box-sizing: border-box; }
     body { margin: 0; overflow: hidden; }
-    #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
-    #hud { position: fixed; inset: 0; pointer-events: none; padding: 34px 38px; display: flex; flex-direction: column; justify-content: space-between; }
+     #scene { position: fixed; inset: 0; z-index: 2; width: 100%; height: 100%; display: block; outline: none; pointer-events: none; }
+     #map-panel { position: fixed; z-index: 1; left: 38px; bottom: 34px; width: min(350px, calc(100vw - 76px)); padding: 14px; border: 1px solid #fff8; border-radius: 18px; background: #f5f4eaf2; box-shadow: 0 10px 36px #16362218; pointer-events: auto; }
+     #map-panel[hidden] { display: none; }
+     #map-canvas { width: 100%; height: 215px; overflow: hidden; border-radius: 10px; background: #d9e0c9; }
+     .map-panel-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 1px 10px; }
+     .map-panel-title .eyebrow { font-size: 9px; letter-spacing: 1.8px; }
+     #map-status { margin: 9px 1px 0; color: #758176; font-size: 10px; line-height: 1.45; }
+     #map-panel.google-primary { inset: 0; left: 0; bottom: auto; z-index: 3; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+     #map-panel.google-primary #map-canvas { height: 100%; border-radius: 0; }
+     #map-panel.google-primary .map-panel-title, #map-panel.google-primary #map-status { position: absolute; z-index: 1; left: 28px; right: 28px; width: max-content; max-width: calc(100vw - 56px); margin: 0; padding: 10px 14px; border-radius: 12px; background: #f5f4eaf0; box-shadow: 0 7px 25px #16362216; }
+     #map-panel.google-primary .map-panel-title { top: 24px; }
+     #map-panel.google-primary #map-status { top: 72px; }
+     #hud { position: fixed; z-index: 4; inset: 0; pointer-events: none; padding: 34px 38px; display: flex; flex-direction: column; justify-content: space-between; }
+     #place-list { position: fixed; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
+     .place-label { position: absolute; transform: translate(-50%, -100%); padding: 4px 7px; color: #344b3e; background: #f5f4eae8; border: 1px solid #fff9; border-radius: 8px; box-shadow: 0 4px 14px #29493918; font-size: 10px; white-space: nowrap; }
+     .place-label-landmark { color: #8e4c32; font-weight: 700; border-color: #d9b99c; }
+     .place-label[hidden] { display: none; }
     header, .bottom { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
     .eyebrow { font-size: 10px; font-weight: 700; letter-spacing: 2.8px; text-transform: uppercase; }
     .brand { background: #f5f4eae8; border: 1px solid #fff9; box-shadow: 0 8px 35px #2949390b; border-radius: 4px 22px 22px 22px; padding: 23px 27px; }
     .brand .eyebrow { color: #718273; }
     h1 { font-family: Georgia, 'Times New Roman', serif; font-size: clamp(28px, 3.5vw, 43px); font-weight: 400; letter-spacing: -1.7px; margin: 8px 0 6px; line-height: 1.1; }
-    .brand p { font-size: 12px; color: #758176; margin: 0; }
+     .brand p { font-size: 12px; color: #758176; margin: 0; }
+     #geo-status { max-width: 300px; margin-top: 12px; color: #667568; font-size: 10px; line-height: 1.4; }
+     #geo-status[data-tone="google"] { color: #55744e; }
+     #geo-status[data-tone="diagnostic"] { color: #9a5d3a; }
     .brand h1 span { color: #879b77; }
     .top-right { display: flex; align-items: center; gap: 10px; }
     .weather, button { border: 1px solid #fff8; background: #f5f4eaed; color: #344b3e; border-radius: 50px; font: inherit; font-size: 12px; padding: 13px 17px; }
@@ -35,7 +53,7 @@
     .map-title .eyebrow { font-size: 9px; letter-spacing: 1.8px; }
     .map-title span:last-child { font-size: 10px; color: #849477; }
     #minimap { display: block; width: 186px; height: 166px; border-radius: 9px; }
-    .map-caption { font-size: 9px; color: #86917e; padding: 10px 0 0; letter-spacing: .5px; }
+     .map-caption { font-size: 9px; color: #86917e; padding: 10px 0 0; letter-spacing: .5px; }
     .controls { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 4px; }
     .controls-title { background: #f7f5e9ed; border-radius: 30px; padding: 9px 18px; font-size: 11px; color: #6b7d67; }
     .controls-row { display: flex; gap: 18px; padding: 12px 20px; background: #f5f4eae8; border-radius: 12px; font-size: 10px; align-items: center; }
@@ -58,22 +76,28 @@
     #touch button { border-radius: 14px; width: 54px; height: 54px; font-size: 22px; padding: 0; touch-action: none; user-select: none; -webkit-user-select: none; }
     #touch button.pressed { background: #bfd0a5; }
     @media (pointer: coarse) { #touch { display: flex; } .controls-row { display: none; } }
-    @media (max-width: 850px) { #hud { padding: 20px; } .location { top: 167px; } .controls { display: none; } .brand { padding: 17px 21px; } .weather { display: none; } .top-right { flex-direction: column; align-items: flex-end; } .map-card { width: 170px; padding: 12px; } #minimap { width: 144px; height: 130px; } .telemetry { min-width: 150px; padding: 18px; } #speed { font-size: 52px; } .stats { gap: 12px; font-size: 9px; } }
-    @media (max-height: 540px) { #hud { padding: 14px; } .brand { padding: 12px 18px; } h1 { font-size: 28px; } .brand p, .map-caption, .controls-title { display: none; } .location { top: 16px; } .map-card { width: 150px; padding: 10px; } #minimap { width: 128px; height: 100px; } .telemetry { padding: 14px 18px; } #touch { bottom: 175px; } }
+     @media (max-width: 850px) { #hud { padding: 20px; } #map-panel { left: 20px; bottom: 20px; width: min(320px, calc(100vw - 40px)); } .location { top: 167px; } .controls { display: none; } .brand { padding: 17px 21px; } .weather { display: none; } .top-right { flex-direction: column; align-items: flex-end; } .map-card { width: 170px; padding: 12px; } #minimap { width: 144px; height: 130px; } .telemetry { min-width: 150px; padding: 18px; } #speed { font-size: 52px; } .stats { gap: 12px; font-size: 9px; } }
+     @media (max-height: 540px) { #hud { padding: 14px; } .brand { padding: 12px 18px; } h1 { font-size: 28px; } .brand p, #geo-status, .map-caption, .controls-title { display: none; } .location { top: 16px; } .map-card { width: 150px; padding: 10px; } #minimap { width: 128px; height: 100px; } .telemetry { padding: 14px 18px; } #touch { bottom: 175px; } #map-panel { bottom: 14px; } }
   </style>
 </head>
 <body>
-  <canvas id="scene" aria-label="3D Dehradun driving scene. Use W A S D or arrow keys to drive." tabindex="0"></canvas>
+  <canvas id="scene" aria-label="3D mapped Dehradun driving scene. Use W A S D or arrow keys to drive." tabindex="0"></canvas>
+  <section id="map-panel" hidden aria-label="Google Maps geographic driving mode">
+    <div class="map-panel-title"><span class="eyebrow">Google Maps driving mode</span><span class="eyebrow">VECTOR 3D · ENU</span></div>
+    <div id="map-canvas" aria-label="Google vector map centered on Dehradun"></div>
+    <p id="map-status">Google’s actual basemap is optional. The local OSM scene remains available as a fallback.</p>
+  </section>
+  <div id="place-list" aria-label="Mapped places"></div>
   <main id="hud">
     <header>
-      <div class="brand"><div class="eyebrow">Uttarakhand · India</div><h1>Dehradun <span>Drive.</span></h1><p>A little closer to the hills.</p></div>
-      <div class="top-right"><div class="weather"><i>☀</i> Valley daylight</div><button id="pause" aria-label="Pause driving" aria-pressed="false">Ⅱ Pause</button><button id="reset" title="Return to Rajpur Road (R)">↺ Reset</button></div>
+      <div class="brand"><div class="eyebrow">Uttarakhand · India</div><h1>Dehradun <span>Drive.</span></h1><p>A little closer to the hills.</p><div id="geo-status" role="status">Mapped streets + approximate facades · Google Maps when enabled.</div></div>
+       <div class="top-right"><div class="weather"><i>☀</i> Valley daylight</div><button id="map-toggle" aria-label="Show Google Maps 3D mode" aria-pressed="false">Google 3D</button><button id="pause" aria-label="Pause driving" aria-pressed="false">Ⅱ Pause</button><button id="reset" title="Return to mapped OSM roads (R)">↺ Reset</button></div>
     </header>
     <section class="location" aria-label="Current road"><div class="eyebrow">Free drive · <span id="heading">N</span></div><div id="road-name">Rajpur Road</div></section>
     <section id="status" role="status"><h2>Welcome to the valley.</h2><p>Building your streetscape…</p></section>
     <div id="touch" aria-label="Touch driving controls"><div class="touch-set"><button data-control="left" aria-label="Steer left">←</button><button data-control="right" aria-label="Steer right">→</button></div><div class="touch-set"><button data-control="reverse" aria-label="Brake or reverse">↓</button><button data-control="forward" aria-label="Accelerate">↑</button></div></div>
     <footer class="bottom">
-      <section class="map-card" aria-label="Street map"><div class="map-title"><span class="eyebrow">Doon Valley</span><span>N ↑</span></div><canvas id="minimap" width="372" height="332" aria-label="Minimap showing the car and street grid"></canvas><div class="map-caption">STYLISED GRID · MUSSOORIE FOOTHILLS</div></section>
+      <section class="map-card" aria-label="Mapped street map"><div class="map-title"><span class="eyebrow">Mapped Doon Valley</span><span>N ↑</span></div><canvas id="minimap" width="372" height="332" aria-label="Minimap showing the car and mapped OSM roads"></canvas><div class="map-caption">OSM ROADS · APPROXIMATE FACADES · GOOGLE WHEN ENABLED</div></section>
       <section class="controls" aria-label="Driving controls"><div class="controls-title">Open roads. No rush. Keep left.</div><div class="controls-row"><div class="key-group"><kbd>W</kbd><kbd>S</kbd> Drive / reverse</div><div class="key-group"><kbd>A</kbd><kbd>D</kbd> Steer</div><div class="key-group"><kbd>Space</kbd> Brake</div><div class="key-group">or arrow keys</div></div></section>
       <section class="telemetry" aria-label="Driving telemetry"><div class="eyebrow">Ember GT</div><div class="speed-row"><span id="speed">0</span><span class="speed-unit">KM/H</span></div><div class="speed-line"><div id="speed-fill"></div></div><div class="stats"><span id="gear">N</span><span id="distance">0.00 km</span><span id="fps">— fps</span></div></section>
     </footer>

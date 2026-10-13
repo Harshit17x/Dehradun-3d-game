@@ -1,9 +1,15 @@
 // Public OSM only. Run `node scripts/fetch-dehradun.mjs` to refresh the committed map.
 import { writeFile } from 'node:fs/promises';
 const origin = { lat: 30.32448, lng: 78.04187 };
-const bounds = { south: 30.316, west: 78.033, north: 30.337, east: 78.051 };
+const districtMode = process.argv.includes('--district');
+const districtBuildings = process.argv.includes('--district-buildings');
+const bounds = districtMode
+  ? { south: 29.9621668, west: 77.57133, north: 31.0375282, east: 78.3104149 }
+  : { south: 30.316, west: 78.033, north: 30.337, east: 78.051 };
 const bbox = `${bounds.south},${bounds.west},${bounds.north},${bounds.east}`;
-const query = `[out:json][timeout:90];(way[highway](${bbox});way[building](${bbox});relation[building](${bbox});nwr[name][shop](${bbox});nwr[name][amenity](${bbox});nwr[name][tourism](${bbox});nwr[name][historic](${bbox});nwr[man_made=clock_tower](${bbox});nwr["tower:type"=clock](${bbox}););out geom;`;
+const query = districtMode
+  ? `[out:json][timeout:180];area(3600374983)->.district;(way[highway](area.district);nwr[name][shop](area.district);nwr[name][amenity](area.district);nwr[name][tourism](area.district);nwr[name][historic](area.district);nwr[man_made=clock_tower](area.district);nwr["tower:type"=clock](area.district);${districtBuildings ? 'way[building](area.district);' : ''});out geom;`
+  : `[out:json][timeout:90];(way[highway](${bbox});way[building](${bbox});relation[building](${bbox});nwr[name][shop](${bbox});nwr[name][amenity](${bbox});nwr[name][tourism](${bbox});nwr[name][historic](${bbox});nwr[man_made=clock_tower](${bbox});nwr["tower:type"=clock](${bbox}););out geom;`;
 const endpoints = ['https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter', 'https://overpass-api.de/api/interpreter'];
 let raw, url, source = 'OpenStreetMap via Overpass API';
 for (const endpoint of process.argv.includes('--osm-api') ? [] : endpoints) {
@@ -75,8 +81,8 @@ for (const element of raw.elements) {
     }
   }
 }
-if (!roads.length || !buildings.length) throw new Error('Incomplete map response; existing data has not been changed.');
-const data = { origin, bounds, roads, buildings, places, provenance: { source, url, fetchedAt: new Date().toISOString(), osmTimestamp: raw.osm3s?.timestamp_osm_base || null, license: 'ODbL 1.0', attribution: '© OpenStreetMap contributors', attributionUrl: 'https://www.openstreetmap.org/copyright', counts: { roads: roads.length, buildings: buildings.length, places: places.length, rawElements: raw.elements.length, excludedBuildingRelations, excludedOpenBuildings }, notes: ['Road widths are tagged or conservative class/lanes estimates; road ways may extend beyond the query bounds. Driving is clipped to the bounds.', 'Building relation multipolygons are excluded rather than incorrectly joined. Closed building ways only.', 'Missing building heights are deterministic 6–12 metre estimates. Tagged building levels use 3 metres per level.', 'Named point features use OSM coordinates; way labels use an actual way vertex. Relations without standalone geometry are omitted.'] } };
+if (!roads.length || (!districtMode && !buildings.length) || (districtMode && districtBuildings && !buildings.length)) throw new Error('Incomplete map response; existing data has not been changed.');
+const data = { origin, bounds, roads, buildings, places, provenance: { source, url, fetchedAt: new Date().toISOString(), osmTimestamp: raw.osm3s?.timestamp_osm_base || null, license: 'ODbL 1.0', attribution: '© OpenStreetMap contributors', attributionUrl: 'https://www.openstreetmap.org/copyright', scope: districtMode ? 'Dehradun district relation 374983' : 'Clock Tower urban extract', counts: { roads: roads.length, buildings: buildings.length, places: places.length, rawElements: raw.elements.length, excludedBuildingRelations, excludedOpenBuildings }, notes: ['Road widths are tagged or conservative class/lanes estimates; road ways may extend beyond the query bounds. Driving is clipped to the bounds.', 'Building relation multipolygons are excluded rather than incorrectly joined. Closed building ways only.', 'Missing building heights are deterministic 6–12 metre estimates. Tagged building levels use 3 metres per level.', 'Named point features use OSM coordinates; way labels use an actual way vertex. Relations without standalone geometry are omitted.', ...(districtMode && !districtBuildings ? ['District mode intentionally omits building footprints; use Google’s vector/photorealistic basemap for native buildings or opt in with --district-buildings after validating payload size.'] : [])] } };
 const serialized = `{"origin":${JSON.stringify(origin)},"bounds":${JSON.stringify(bounds)},\n"roads":[\n${roads.map(r => JSON.stringify(r)).join(',\n')}\n],"buildings":[\n${buildings.map(b => JSON.stringify(b)).join(',\n')}\n],"places":[\n${places.map(p => JSON.stringify(p)).join(',\n')}\n],"provenance":${JSON.stringify(data.provenance, null, 2)}\n}\n`;
 await writeFile(new URL('../src/dehradun-data.json', import.meta.url), serialized);
 console.log(JSON.stringify({ status: 'Public OSM map saved', url, ...data.provenance.counts }));

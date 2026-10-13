@@ -6,7 +6,9 @@ import { PlayerController } from './player.js';
 import { MinimapManager } from './minimap.js';
 import { sound } from './audio.js';
 
-const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyBf6-zZna3bNFU7cBNeeHpYfVtrOrHa-d4';
+// Keep credentials out of source. The legacy explorer reads the same private
+// Vite environment variable as the geographic driving scene.
+const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
 
 // Dehradun 3D Interactive Map & Valley Explorer Main Application
 class DehradunApp {
