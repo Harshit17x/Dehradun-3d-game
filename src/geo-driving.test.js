@@ -42,7 +42,10 @@ test('real OSM provenance counts, mapped Ghanta Ghar coordinate and named roads 
     assert.equal(data[key].length, data.provenance.counts[key], `${key} provenance count`);
     assert.equal(new Set(data[key].map(item => item.id)).size, data[key].length, `${key} OSM IDs are unique`);
   }
-  assert.ok(data.roads.length > 500 && data.buildings.length > 4000);
+  assert.ok(data.roads.length > 10000 && data.buildings.length > 9000, 'the committed map covers the full city extract');
+  assert.deepEqual(data.bounds, { south: 30.24, west: 77.94, north: 30.43, east: 78.17 });
+  assert.equal(data.provenance.scope, 'Dehradun city region');
+  assert.ok(data.signals.length >= 1 && data.crossings.length >= 1 && data.streetLamps.length >= 1, 'mapped traffic infrastructure is present');
   assert.match(data.provenance.source, /OpenStreetMap/);
   assert.match(data.provenance.license, /ODbL/);
   assert.match(data.provenance.attribution, /OpenStreetMap/);
@@ -165,6 +168,22 @@ test('geographic bounds constrain every part of the vehicle', () => {
   run(s, { forward: true }, 2, n);
   assert.ok(n.isVehicleDrivable(s.x, s.z, s.heading));
   assert.ok(s.z >= -7.78 - 1e-7 && s.speed < .1);
+});
+
+test('nearby invalid poses recover onto a traversable road direction without a long snap', () => {
+  const narrow = network([road([[0, -100], [0, 100]], 3)]);
+  const stateOnEdge = state(0, 0, Math.PI / 2, 8);
+  stepGeoDriving(stateOnEdge, { forward: true }, .1, narrow);
+  assert.ok(narrow.isVehicleDrivable(stateOnEdge.x, stateOnEdge.z, stateOnEdge.heading));
+  assert.ok(stateOnEdge.speed > 0, 'input can accelerate after heading recovery');
+  assert.ok(Math.hypot(stateOnEdge.x, stateOnEdge.z) < .2, 'recovery stays local');
+
+  const blocked = network([road(undefined, 10)], [rectangle(-2, -1, 2, 1)]);
+  const wedged = state(1.8, 0, 0, 6);
+  assert.ok(!blocked.isVehicleDrivable(wedged.x, wedged.z, wedged.heading));
+  stepGeoDriving(wedged, { forward: true }, .1, blocked);
+  assert.ok(blocked.isVehicleDrivable(wedged.x, wedged.z, wedged.heading));
+  assert.ok(Math.hypot(wedged.x - 1.8, wedged.z) <= 2.0 + 1e-9, 'obstacle recovery is bounded');
 });
 
 test('forward/reverse caps, direction-change braking and explicit brake work in either direction', () => {

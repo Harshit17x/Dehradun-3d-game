@@ -145,7 +145,7 @@ function restoreParent(record) {
  * Render the caller-owned geographic Three.js groups in Google's vector map
  * WebGL context. The factory does not create or own a second vehicle.
  */
-export async function createGoogleDriveOverlay({ container, data, worldGroup, vehicleGroup, onStatus } = {}) {
+export async function createGoogleDriveOverlay({ container, data, state, worldGroup, vehicleGroup, onStatus } = {}) {
   if (!container || typeof container !== 'object' || !container.style) throw new TypeError('Google overlay requires a map container');
   if (!data?.origin || !Number.isFinite(data.origin.lat) || !Number.isFinite(data.origin.lng)) throw new TypeError('Google overlay requires a geographic origin');
   if (!worldGroup?.isObject3D || !vehicleGroup?.isObject3D) throw new TypeError('Google overlay requires Three.js world and vehicle groups');
@@ -182,8 +182,8 @@ export async function createGoogleDriveOverlay({ container, data, worldGroup, ve
   let readySettled = false;
   let visible = true;
   let firstDrawTimer;
-  let smoothedHeading;
-  let latestState;
+  let smoothedHeading = finiteState(state) ? state.heading : undefined;
+  let latestState = finiteState(state) ? { x: state.x, z: state.z, heading: state.heading } : undefined;
   const listeners = [];
   let resolveReady;
   let rejectReady;
@@ -264,7 +264,7 @@ export async function createGoogleDriveOverlay({ container, data, worldGroup, ve
     googleGl = gl;
     renderer = new THREE.WebGLRenderer({ canvas: gl.canvas, context: gl, ...gl.getContextAttributes() });
     renderer.autoClear = false;
-    camera = new THREE.Camera();
+    camera = new THREE.PerspectiveCamera();
     camera.matrixAutoUpdate = false;
     camera.matrix.identity();
     camera.matrixWorld.identity();

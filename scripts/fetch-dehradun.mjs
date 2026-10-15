@@ -4,14 +4,17 @@
 import { rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CITY_ORIGIN, normalizeOSM } from '../src/osm-normalize.js';
+import { CITY_BOUNDS, CITY_ORIGIN, normalizeOSM } from '../src/osm-normalize.js';
 
 const districtMode = process.argv.includes('--district') || process.argv.includes('--district-buildings');
 const districtBuildings = process.argv.includes('--district-buildings');
+const centralMode = process.argv.includes('--central');
 const origin = CITY_ORIGIN;
 const bounds = districtMode
   ? { south: 29.9621668, west: 77.57133, north: 31.0375282, east: 78.3104149 }
-  : { south: 30.320, west: 78.037, north: 30.329, east: 78.047 };
+  : centralMode
+    ? { south: 30.320, west: 78.037, north: 30.329, east: 78.047 }
+    : CITY_BOUNDS;
 const output = new URL(districtMode ? '../src/dehradun-district-data.json' : '../src/dehradun-data.json', import.meta.url);
 const bbox = `${bounds.south},${bounds.west},${bounds.north},${bounds.east}`;
 const query = districtMode
@@ -33,7 +36,7 @@ if (!raw) {
   // The public map API is intentionally available only for a <=0.01° square.
   // It is not a fallback for district or city-sized requests.
   const height = bounds.north - bounds.south, width = bounds.east - bounds.west;
-  if (Math.max(height, width) > 0.01) throw new Error(`Overpass unavailable (${lastError?.message || 'unknown error'}); map fallback is limited to <=0.01° square and existing data was unchanged.`);
+  if (Math.max(height, width) > 0.01) throw new Error(`Overpass unavailable (${lastError?.message || 'unknown error'}); map fallback is limited to <=0.01° square; use --central or keep existing data.`);
   url = `https://api.openstreetmap.org/api/0.6/map.json?bbox=${bounds.west},${bounds.south},${bounds.east},${bounds.north}`;
   const response = await fetch(url, { headers: { 'User-Agent': 'DehradunDriveMap/1.0 (public geographic map)' }, signal: AbortSignal.timeout(60000) });
   if (!response.ok) throw new Error(`Public OSM map fallback failed: HTTP ${response.status}; existing data unchanged.`);
@@ -42,7 +45,7 @@ if (!raw) {
   source = 'OpenStreetMap public map API';
 }
 
-const data = normalizeOSM(raw, { origin, bounds, source, url, fetchedAt: new Date().toISOString(), scope: districtMode ? 'Dehradun district extract (explicit opt-in)' : 'Dehradun city region urban extract' });
+const data = normalizeOSM(raw, { origin, bounds, source, url, fetchedAt: new Date().toISOString(), scope: districtMode ? 'Dehradun district extract (explicit opt-in)' : centralMode ? 'Central Dehradun extract (explicit opt-in)' : 'Dehradun city region' });
 if (!data.roads.length || (!districtMode && !data.buildings.length) || (districtMode && districtBuildings && !data.buildings.length)) throw new Error('Incomplete normalized map response; existing data was unchanged.');
 
 const serialized = `${JSON.stringify(data)}\n`;

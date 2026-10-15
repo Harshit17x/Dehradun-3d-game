@@ -96,10 +96,11 @@ export function createStreetInfrastructure(data = {}) {
   const group = new THREE.Group();
   group.name = 'Mapped street infrastructure (OSM records only)';
   group.userData.provenance = 'Only data.signals, data.crossings, data.barriers and data.streetLamps; no default fixtures';
-  const geometries = new Set(), materials = new Set(), textures = new Set();
+  const geometries = new Set(), materials = new Set(), textures = new Set(), lights = new Set();
   const batches = new Map();
   group.userData.provenanceSignals = [];
   group.userData.provenanceRecords = [];
+  group.userData.visualMode = 'day';
   const addMaterial = (color, options = {}) => { const m = new THREE.MeshStandardMaterial({ color, roughness: .8, ...options }); materials.add(m); return m; };
   const mats = {
     dark: addMaterial('#202326', { metalness: .35 }), yellow: addMaterial('#e5ad22'), red: addMaterial('#2b0000', { emissive: '#ff1b00' }),
@@ -156,15 +157,30 @@ export function createStreetInfrastructure(data = {}) {
     const h = Math.max(2, number(record.height, 4.2)), heading = direction(record); const pole = new THREE.CylinderGeometry(.09, .13, h, 8); pole.translate(record.x, h / 2, record.z); add(pole, mats.lamp);
     const arm = new THREE.BoxGeometry(.08, .08, 1.1); arm.rotateY(heading); arm.translate(record.x, h - .15, record.z); add(arm, mats.lamp);
     const bulb = new THREE.SphereGeometry(.14, 8, 6); bulb.translate(record.x - Math.cos(heading) * .5, h - .28, record.z + Math.sin(heading) * .5); add(bulb, mats.glow);
+    // Only mapped OSM lamp records receive illumination. The cap keeps large
+    // city extracts from turning into a costly field of dynamic lights.
+    if (lights.size < 64) {
+      const light = new THREE.PointLight('#ffd58c', 0, Math.max(8, h * 2.8), .78);
+      light.position.set(record.x - Math.cos(heading) * .5, h - .2, record.z + Math.sin(heading) * .5);
+      light.userData.nightIntensity = Math.min(5.5, Math.max(1.6, h * .72));
+      group.add(light); lights.add(light);
+    }
   }
   for (const [mat, parts] of batches) { const merged = mergeGeometries(parts, false); for (const part of parts) part.dispose(); if (!merged) continue; geometries.add(merged); merged.computeBoundingSphere(); const mesh = new THREE.Mesh(merged, mat); mesh.castShadow = mesh.receiveShadow = true; mesh.userData.provenance = { source: 'OpenStreetMap', records: group.userData.provenanceRecords }; group.add(mesh); }
   batches.clear();
+  function setNightMode(night) {
+    const enabled = Boolean(night);
+    group.userData.visualMode = enabled ? 'night' : 'day';
+    for (const light of lights) light.intensity = enabled ? light.userData.nightIntensity : 0;
+    mats.glow.emissiveIntensity = enabled ? 3.5 : .45;
+  }
   function update(time) {
     const t = Number.isFinite(time) ? ((time % 14) + 14) % 14 : 0;
-    const a = t < 6 ? 'green' : t < 7.5 ? 'amber' : 'red', b = t < 13 ? 'red' : t < 14 ? 'amber' : 'green';
+    const a = t < 6 ? 'green' : t < 7.5 ? 'amber' : 'red', b = t < 7.5 ? 'red' : t < 13 ? 'green' : 'amber';
     for (const signal of signals) { const active = signal.phase === 'B' ? b : a; signal.materials.red.emissiveIntensity = active === 'red' ? 2.4 : .05; signal.materials.amber.emissiveIntensity = active === 'amber' ? 2.2 : .05; signal.materials.green.emissiveIntensity = active === 'green' ? 2.4 : .05; }
   }
+  setNightMode(false);
   update(0);
   let disposed = false;
-  return { group, update, getBarrierObstacles: () => getBarrierObstacles(data), dispose() { if (disposed) return; disposed = true; group.removeFromParent(); group.clear(); for (const g of geometries) g.dispose(); for (const m of materials) m.dispose(); for (const t of textures) t.dispose(); geometries.clear(); materials.clear(); textures.clear(); } };
+  return { group, update, setNightMode, getBarrierObstacles: () => getBarrierObstacles(data), dispose() { if (disposed) return; disposed = true; group.removeFromParent(); group.clear(); for (const g of geometries) g.dispose(); for (const m of materials) m.dispose(); for (const t of textures) t.dispose(); geometries.clear(); materials.clear(); textures.clear(); lights.clear(); } };
 }

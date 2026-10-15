@@ -17,6 +17,10 @@ test('Cesium drive exposes the requested runtime configuration contract', () => 
   assert.match(source, /tile\.googleapis\.com\/v1\/3dtiles\/root\.json/);
   assert.match(source, /createWorldTerrainAsync/);
   assert.match(source, /createOsmBuildingsAsync/);
+  assert.match(source, /Model\.fromGltfAsync/);
+  assert.match(source, /2024_bmw_m4_coupe_competition\.glb/);
+  assert.match(source, /police_car_low_poly\.glb/);
+  assert.match(source, /Real 3D vehicle ready/);
 });
 
 test('local coordinate and heading helpers preserve the driving convention', async () => {

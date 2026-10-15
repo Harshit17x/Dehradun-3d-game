@@ -80,9 +80,11 @@ npm run fetch:map
 
 The build writes the normal website to `dist-drive/`, then embeds the generated
 JavaScript into `dehradun-drive.html`. `npm run preview` serves the production
-website and the runtime Google config endpoint. `npm run fetch:map` refreshes a
-bounded central-Dehradun extract from public OpenStreetMap Overpass servers and
-replaces `src/dehradun-data.json` only after a complete response. Existing
+website and the runtime Google config endpoint. `npm run fetch:map` refreshes the
+full bounded Dehradun city region (`30.24–30.43 N`, `77.94–78.17 E`) from public
+OpenStreetMap Overpass servers and replaces `src/dehradun-data.json` only after a
+complete response. Use `npm run fetch:central` for the smaller central extract
+when testing with a limited Overpass endpoint. Existing
 explorer code is retained in `src/`, its entry is
 `valley-explorer.html`, and the original `dist/` is not overwritten.
 
@@ -98,6 +100,11 @@ explorer code is retained in `src/`, its entry is
   not read or write API keys.
 - `src/geo-world.js`: OSM-footprint architecture, mapped place awnings, and
   approximate Clock Tower detail.
+- `src/map-chunks.js`: spatial OSM partitioning and nearest-first incremental
+  scenery streaming. The collision network remains available for the whole
+  city while visual chunks are built and unloaded around the car.
+- `src/mapped-surface.js`: low-allocation typed-array road strips, markings,
+  ground and boundary meshes used by streamed chunks.
 - `src/geo-driving.js`: geographic polyline driving, actual-road collision,
   full car capsule clearance, Clock Tower obstacle, and swept turns.
 - `src/google-drive-overlay.js`: optional Google vector map plus shared
@@ -136,6 +143,11 @@ explorer code is retained in `src/`, its entry is
 - Exponential camera damping is independent of render frame rate. Desired chase
   positions are constrained to the street network to reduce building clipping.
 - Standard depth fog, warm sun, hemisphere fill and soft PCF shadows.
+- Full-city scenery is streamed in 320 m chunks: one nearest missing chunk is
+  built per animation update, with a 720 m load radius and 980 m unload
+  hysteresis. Distant buildings and road meshes are disposed as the car moves;
+  the complete OSM collision network remains authoritative so streaming never
+  makes a road temporarily undrivable.
 - Mapped architecture is batched by facade material; car details are batched
   within their animated groups. Device pixel ratio is capped at 1.75, and a
   local 2048² shadow map follows the vehicle. Google mode shares Google's

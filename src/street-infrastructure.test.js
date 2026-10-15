@@ -23,6 +23,18 @@ test('signals render only supplied nodes and retain explicit inferred placement 
   result.dispose();
 });
 
+test('mapped street lamps gain bounded night illumination and return to dark in daytime', () => {
+  const result = createStreetInfrastructure({ streetLamps: [osm({ id: 'node/lamp', x: 2, z: 3, height: 5 })] });
+  const light = result.group.children.find((child) => child.isLight);
+  assert.ok(light, 'an OSM lamp has a point-light mesh companion');
+  assert.equal(light.intensity, 0);
+  result.setNightMode(true);
+  assert.ok(light.intensity > 0 && light.intensity <= 5.5);
+  result.setNightMode(false);
+  assert.equal(light.intensity, 0);
+  result.dispose();
+});
+
 test('barrier polygons match mapped width and unknown gates remain non-colliding', () => {
   const wall = osm({ id: 'way/wall', kind: 'wall', width: 1.2, height: 1.5, points: [[-6, 0], [6, 0]] });
   const gate = osm({ id: 'way/gate', kind: 'gate', points: [[-3, 5], [3, 5]] });
@@ -45,6 +57,9 @@ test('closed mapped barrier blocks the full vehicle sweep without teleport recov
   const stopped = { x: state.x, z: state.z };
   stepGeoDriving(state, { forward: true }, 1, network);
   assert.ok(Math.hypot(state.x - stopped.x, state.z - stopped.z) < .01, 'blocked vehicle is not teleported');
+  for (let i = 0; i < 10; i++) stepGeoDriving(state, { reverse: true }, .1, network);
+  assert.ok(state.z > stopped.z + .1, 'reverse input can recover from a head-on collision');
+  assert.ok(network.isVehicleDrivable(state.x, state.z, state.heading));
 });
 
 test('signal cycle is deterministic from absolute simulation time', () => {
@@ -53,5 +68,7 @@ test('signal cycle is deterministic from absolute simulation time', () => {
   a.update(6.25); b.update(6.25);
   const findMaterial = (root, color) => root.children.find((child) => child.isMesh && child.material?.color?.getHex() === color);
   assert.equal(findMaterial(a.group, 0x2b0000)?.material.emissiveIntensity, findMaterial(b.group, 0x2b0000)?.material.emissiveIntensity);
+  a.update(2); b.update(2);
+  assert.equal(findMaterial(a.group, 0x002a0a)?.material.emissiveIntensity, 2.4, 'phase A exposes green during its green interval');
   a.dispose(); b.dispose();
 });

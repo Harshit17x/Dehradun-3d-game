@@ -8,7 +8,10 @@ import { createGoogleDriveOverlay } from './google-drive-overlay.js';
 import { createCesiumDrive } from './cesium-drive.js';
 import { createCityLoader } from './city-loader.js';
 import { toLocal } from './geo-driving.js';
+import { createMapChunkIndex, createChunkStreamer } from './map-chunks.js';
+import { createMappedSurface as createChunkSurface } from './mapped-surface.js';
 import { sound } from './audio.js';
+import { getVisualTheme, normalizeVisualMode } from './geo-visuals.js';
 import mappedData from './dehradun-data.json' with { type: 'json' };
 
 const canvas = document.querySelector('#scene');
@@ -22,6 +25,9 @@ const cesiumPanel = document.querySelector('#cesium-panel');
 const cesiumCanvas = document.querySelector('#cesium-canvas');
 const cesiumStatus = document.querySelector('#cesium-status');
 const cesiumToggle = document.querySelector('#cesium-toggle');
+const timeToggle = document.querySelector('#time-toggle');
+const timeIcon = document.querySelector('#time-icon');
+const timeText = document.querySelector('#time-text');
 const geoStatus = document.querySelector('#geo-status');
 const placeList = document.querySelector('#place-list');
 const ui = Object.fromEntries(['speed', 'speed-fill', 'gear', 'distance', 'fps', 'heading', 'road-name'].map(id => [id, document.getElementById(id)]));
@@ -58,8 +64,8 @@ function createMappedSurface(data, network) {
   const bounds = network.bounds;
   const width = bounds.maxX - bounds.minX + 40;
   const depth = bounds.maxZ - bounds.minZ + 40;
-  const groundMaterial = new THREE.MeshStandardMaterial({ color: '#b8c49f', roughness: 1 });
-  const roadMaterial = new THREE.MeshStandardMaterial({ color: '#4d5651', roughness: 0.96, metalness: 0.01 });
+  const groundMaterial = new THREE.MeshStandardMaterial({ color: '#aebb9f', roughness: 1 });
+  const roadMaterial = new THREE.MeshStandardMaterial({ color: '#424a4a', roughness: 0.96, metalness: 0.01 });
   materials.add(groundMaterial); materials.add(roadMaterial);
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), groundMaterial);
@@ -72,7 +78,7 @@ function createMappedSurface(data, network) {
 
   const parts = [];
   const markingParts = [];
-  const markingMaterial = new THREE.MeshStandardMaterial({ color: '#f5f3ec', roughness: 0.85, metalness: 0.05 });
+  const markingMaterial = new THREE.MeshStandardMaterial({ color: '#f5f1df', roughness: 0.85, metalness: 0.05 });
   materials.add(markingMaterial);
 
   for (const road of Array.isArray(data.roads) ? data.roads : []) {
@@ -154,6 +160,25 @@ function createMappedSurface(data, network) {
     }
   }
 
+  // A visible edge makes the finite OSM extract legible without changing the
+  // road network or collision model. It is derived from network.bounds only.
+  const boundaryGroup = new THREE.Group();
+  boundaryGroup.name = 'OSM mapped-area boundary';
+  boundaryGroup.userData.provenance = 'Derived from supplied OSM road-network bounds; visual edge only';
+  const boundaryMaterial = new THREE.MeshStandardMaterial({ color: '#d7b65c', emissive: '#786128', emissiveIntensity: .3, roughness: .7 });
+  materials.add(boundaryMaterial);
+  const boundaryPadding = 1.5;
+  const minX = bounds.minX - boundaryPadding, maxX = bounds.maxX + boundaryPadding;
+  const minZ = bounds.minZ - boundaryPadding, maxZ = bounds.maxZ + boundaryPadding;
+  const addEdge = (x, z, edgeWidth, edgeDepth) => {
+    const geometry = new THREE.BoxGeometry(edgeWidth, .035, edgeDepth);
+    geometry.translate(x, .012, z); geometries.add(geometry);
+    const mesh = new THREE.Mesh(geometry, boundaryMaterial); mesh.receiveShadow = true; boundaryGroup.add(mesh);
+  };
+  addEdge((minX + maxX) / 2, minZ, maxX - minX, .22); addEdge((minX + maxX) / 2, maxZ, maxX - minX, .22);
+  addEdge(minX, (minZ + maxZ) / 2, .22, maxZ - minZ); addEdge(maxX, (minZ + maxZ) / 2, .22, maxZ - minZ);
+  group.add(boundaryGroup);
+
   if (parts.length) {
     const roads = mergeGeometries(parts, false);
     for (const part of parts) part.dispose();
@@ -179,8 +204,18 @@ function createMappedSurface(data, network) {
     }
   }
 
+  function setTimeOfDay(mode) {
+    const visualMode = normalizeVisualMode(mode);
+    const theme = getVisualTheme(visualMode);
+    groundMaterial.color.set(theme.ground); roadMaterial.color.set(theme.road); markingMaterial.color.set(theme.marking);
+    boundaryMaterial.color.set(theme.boundary); boundaryMaterial.emissive.set(theme.boundaryEmissive);
+    boundaryMaterial.emissiveIntensity = visualMode === 'night' ? 1.2 : .3;
+    group.userData.visualMode = visualMode;
+  }
+  setTimeOfDay('day');
   return {
     group,
+    setTimeOfDay,
     dispose() {
       group.removeFromParent();
       group.clear();
@@ -214,7 +249,7 @@ function updatePlaceLabels(entries, camera) {
   }
 }
 
-function buildMinimap(network) {
+function buildMinimap(network, mode = 'day') {
   const map = document.querySelector('#minimap');
   const ctx = map.getContext('2d');
   const baseMap = document.createElement('canvas');
@@ -225,17 +260,21 @@ function buildMinimap(network) {
   const scale = Math.min((map.width - margin * 2) / (bounds.maxX - bounds.minX), (map.height - margin * 2) / (bounds.maxZ - bounds.minZ));
   const mx = x => margin + (x - bounds.minX) * scale + (map.width - margin * 2 - (bounds.maxX - bounds.minX) * scale) / 2;
   const mz = z => map.height - margin - (z - bounds.minZ) * scale - (map.height - margin * 2 - (bounds.maxZ - bounds.minZ) * scale) / 2;
-  bg.fillStyle = '#d9e0c9'; bg.fillRect(0, 0, map.width, map.height);
-  bg.lineCap = 'round';
-  for (const segment of network.segments) {
-    bg.strokeStyle = segment.width >= 10 ? '#f2eee0' : '#ece8da';
-    bg.lineWidth = Math.max(1.5, segment.width * scale);
-    bg.beginPath(); bg.moveTo(mx(segment.ax), mz(segment.az)); bg.lineTo(mx(segment.bx), mz(segment.bz)); bg.stroke();
+  function setTimeOfDay(value) {
+    const theme = getVisualTheme(value);
+    bg.fillStyle = theme.ground; bg.fillRect(0, 0, map.width, map.height);
+    bg.lineCap = 'round';
+    for (const segment of network.segments) {
+      bg.strokeStyle = segment.width >= 10 ? theme.marking : theme.road;
+      bg.lineWidth = Math.max(1.5, segment.width * scale);
+      bg.beginPath(); bg.moveTo(mx(segment.ax), mz(segment.az)); bg.lineTo(mx(segment.bx), mz(segment.bz)); bg.stroke();
+    }
+    bg.strokeStyle = theme.boundary; bg.lineWidth = 1;
+    bg.strokeRect(margin, margin, map.width - margin * 2, map.height - margin * 2);
   }
-  bg.strokeStyle = '#b6c29f'; bg.lineWidth = 1;
-  bg.strokeRect(margin, margin, map.width - margin * 2, map.height - margin * 2);
+  setTimeOfDay(mode);
 
-  return { map, ctx, baseMap, mx, mz };
+  return { map, ctx, baseMap, mx, mz, setTimeOfDay };
 }
 
 async function setMapVisible(visible, scene, state) {
@@ -264,13 +303,14 @@ async function setMapVisible(visible, scene, state) {
     googleOverlayPromise = createGoogleDriveOverlay({
       container: mapCanvas,
       data: currentData,
+      state,
       worldGroup: mappedWorld.group,
       vehicleGroup: vehicle.group,
       onStatus: (title, text) => {
         mapStatus.textContent = `${title} · ${text}`;
         if (/ready/i.test(title)) setGeoStatus(`Google vector 3D active · the single car and ${localCoverage()} are georeferenced over the actual basemap.`, 'google');
-         if (/unavailable/i.test(title)) setGeoStatus(`Google 3D unavailable · ${text} Local geographic OSM mode remains available.`, 'diagnostic');
-       },
+        if (/unavailable/i.test(title)) setGeoStatus(`Google 3D unavailable · ${text} Local geographic OSM mode remains available.`, 'diagnostic');
+      },
     }).then(result => {
       if (requestGeneration !== googleOverlayGeneration || mapPanel.hidden || stopped) {
         result.dispose();
@@ -281,6 +321,11 @@ async function setMapVisible(visible, scene, state) {
     }).catch(error => {
       googleOverlayPromise = null;
       googleOverlay = null;
+      mapPanel.hidden = true;
+      mapPanel.classList.remove('google-primary');
+      mapToggle.setAttribute('aria-pressed', 'false');
+      mapToggle.textContent = 'Google 3D';
+      mapToggle.setAttribute('aria-label', 'Show Google Maps 3D mode');
       canvas.style.visibility = 'visible';
       setGeoStatus(`Google 3D unavailable · ${error.message}. Local geographic OSM mode remains active.`, 'diagnostic');
       mapStatus.textContent = `Google 3D unavailable · ${error.message}`;
@@ -339,8 +384,7 @@ async function setCesiumVisible(visible, scene, state) {
 
 function start() {
   let network = createRoadNetwork(currentData);
-  mappedWorld = createGeoWorld(currentData);
-  mappedSurface = createMappedSurface(currentData, network);
+  let chunkIndex = createMapChunkIndex(currentData, { chunkSize: 320 });
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.75));
   renderer.setSize(innerWidth, innerHeight);
@@ -351,10 +395,12 @@ function start() {
   renderer.toneMappingExposure = 1.18;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog('#cbdad7', 100, 610);
+  scene.fog = new THREE.Fog('#c8d8d7', 100, 610);
   const camera = new THREE.PerspectiveCamera(53, innerWidth / innerHeight, 0.15, 1000);
-  scene.add(mappedSurface.group, mappedWorld.group);
-  scene.add(new THREE.HemisphereLight('#e4f1ff', '#8b8964', 2.4));
+  mappedSurface = createChunkSurface({ roads: [] }, network);
+  scene.add(mappedSurface.group);
+  const hemisphere = new THREE.HemisphereLight('#e4f1ff', '#68745f', 2.2);
+  scene.add(hemisphere);
   sun = new THREE.DirectionalLight('#fff0d4', 3.0);
   sun.shadow.mapSize.set(2048, 2048);
   Object.assign(sun.shadow.camera, { left: -65, right: 65, top: 65, bottom: -65, near: 10, far: 240 });
@@ -364,9 +410,73 @@ function start() {
   scene.add(sun, sun.target);
   vehicle = createVehicle();
   scene.add(vehicle.group);
+  let visualMode = 'day';
+  let minimap;
+  let chunkStreamer;
+  let labelVersion = -1;
+  let labels = [];
+  const refreshChunkLabels = () => {
+    placeList.replaceChildren();
+    labels = [];
+    for (const handle of chunkStreamer?.active.values() || []) labels.push(...addPlaceLabels(handle.labels || []));
+  };
+  const worldGroup = new THREE.Group();
+  worldGroup.name = 'Streamed World Chunks';
+  scene.add(worldGroup);
+  const createStreamingWorld = (index) => createChunkStreamer({
+    index,
+    loadRadius: 720,
+    unloadRadius: 980,
+    maxBuildsPerUpdate: 1,
+    budgetMs: 5,
+    buildChunk(chunk) {
+      const world = createGeoWorld(chunk.data);
+      const surface = createChunkSurface(chunk.data, network, { ground: false, boundary: false });
+      const group = new THREE.Group();
+      group.name = `Map chunk ${chunk.key}`;
+      group.add(surface.group, world.group);
+      worldGroup.add(group);
+      return {
+        group,
+        labels: world.labels,
+        setTimeOfDay(mode) { world.setTimeOfDay(mode); surface.setTimeOfDay(mode); },
+        setBuildingsVisible(visible) { world.setBuildingsVisible(visible); },
+        update(time) { world.update(time); },
+        dispose() { world.dispose(); surface.dispose(); group.removeFromParent(); group.clear(); },
+      };
+    },
+  });
+  chunkStreamer = createStreamingWorld(chunkIndex);
+  mappedWorld = {
+    group: worldGroup,
+    setTimeOfDay(mode) { chunkStreamer?.setTimeOfDay(mode); },
+    update(time) { for (const handle of chunkStreamer?.active.values() || []) handle.update?.(time); },
+    dispose() { chunkStreamer?.dispose?.(); chunkStreamer = null; worldGroup.clear(); },
+  };
+  function setTimeOfDay(mode) {
+    visualMode = normalizeVisualMode(mode);
+    const theme = getVisualTheme(visualMode);
+    scene.background = new THREE.Color(theme.background);
+    scene.fog.color.set(theme.fog); scene.fog.near = theme.fogNear; scene.fog.far = theme.fogFar;
+    renderer.setClearColor(theme.background, 1);
+    hemisphere.color.set(theme.skyLight); hemisphere.groundColor.set(theme.groundLight); hemisphere.intensity = theme.skyIntensity;
+    sun.color.set(theme.sun); sun.intensity = theme.sunIntensity;
+    mappedWorld?.setTimeOfDay?.(visualMode); mappedSurface?.setTimeOfDay?.(visualMode);
+    minimap?.setTimeOfDay?.(visualMode);
+    if (timeToggle) {
+      timeToggle.textContent = visualMode === 'night' ? '☀ Day' : '☾ Night';
+      timeToggle.setAttribute('aria-pressed', String(visualMode === 'night'));
+      timeToggle.setAttribute('aria-label', visualMode === 'night' ? 'Switch to daylight' : 'Switch to night mode');
+    }
+    if (timeIcon) timeIcon.textContent = visualMode === 'night' ? '☾' : '☀';
+    if (timeText) timeText.textContent = visualMode === 'night' ? 'Valley night' : 'Valley daylight';
+  }
+  setTimeOfDay(visualMode);
   const state = createGeoState(network);
-  let minimap = buildMinimap(network);
-  let labels = addPlaceLabels(mappedWorld.labels);
+  minimap = buildMinimap(network, visualMode);
+  chunkStreamer.update(state.x, state.z);
+  labelVersion = chunkStreamer.getStats().labelVersion;
+  refreshChunkLabels();
   cityLoader = createCityLoader({ onStatus: (event) => {
     if (event.status === 'loading') setGeoStatus(`Loading mapped Dehradun streets near ${Number(event.lat).toFixed(4)}, ${Number(event.lng).toFixed(4)}…`, 'loading');
     if (event.status === 'error') setGeoStatus(`City map unavailable · ${event.error?.message || 'request failed'}. Current mapped area remains active.`, 'diagnostic');
@@ -424,21 +534,24 @@ function start() {
     try {
       const nextData = await cityLoader.load(lat, lng);
       const nextNetwork = createRoadNetwork(nextData);
-      const nextWorld = createGeoWorld(nextData);
-      const nextSurface = createMappedSurface(nextData, nextNetwork);
       const target = toLocal(lat, lng, nextData.origin);
       let nextState;
       try { nextState = nextNetwork.spawnNear(target.x, target.z); }
       catch { nextState = createGeoState(nextNetwork); }
       mappedWorld?.dispose(); mappedSurface?.dispose();
-      scene.add(nextSurface.group, nextWorld.group);
-      placeList.replaceChildren();
-      mappedWorld = nextWorld; mappedSurface = nextSurface; network = nextNetwork; currentData = nextData;
-      labels = addPlaceLabels(mappedWorld.labels);
-      minimap = buildMinimap(network);
+      network = nextNetwork; currentData = nextData;
+      chunkIndex = createMapChunkIndex(nextData, { chunkSize: 320 });
+      mappedSurface = createChunkSurface({ roads: [] }, network);
+      scene.add(mappedSurface.group);
+      chunkStreamer = createStreamingWorld(chunkIndex);
+      mappedWorld.setTimeOfDay(visualMode);
+      minimap = buildMinimap(network, visualMode);
       Object.assign(state, nextState);
       Object.assign(previous, { x: state.x, z: state.z, heading: state.heading });
       accumulator = 0;
+      chunkStreamer.update(state.x, state.z);
+      labelVersion = chunkStreamer.getStats().labelVersion;
+      refreshChunkLabels();
       syncCar(); updateCamera(0, true); updateHUD();
       setGeoStatus(`Mapped city cell active · ${currentData.provenance?.counts?.buildings || 0} building footprints, ${currentData.provenance?.counts?.roads || 0} roads · OSM locations, approximate façades.`, 'offline');
     } catch (error) {
@@ -469,6 +582,7 @@ function start() {
     if (bindings[event.code]) { event.preventDefault(); if (!paused) keyboard.add(event.code); }
     if (!event.repeat && event.code === 'KeyP') setPaused(!paused);
     if (!event.repeat && event.code === 'KeyR') reset();
+    if (!event.repeat && event.code === 'KeyN') setTimeOfDay(visualMode === 'night' ? 'day' : 'night');
     if (!event.repeat && event.code === 'KeyH') {
       const active = vehicle.toggleHeadlights();
       const btn = document.querySelector('#headlights-toggle');
@@ -506,6 +620,7 @@ function start() {
       headlightsToggle.textContent = active ? '💡 Lights On' : '💡 Lights Off';
     });
   }
+  if (timeToggle) on(timeToggle, 'click', () => setTimeOfDay(visualMode === 'night' ? 'day' : 'night'));
 
   document.querySelectorAll('[data-vehicle]').forEach(btn => {
     on(btn, 'click', () => {
@@ -591,6 +706,11 @@ function start() {
     const texel = 130 / 2048;
     const sx = Math.round(state.x / texel) * texel, sz = Math.round(state.z / texel) * texel;
     sun.position.set(sx - 55, 95, sz - 35); sun.target.position.set(sx, 0, sz);
+    const streamStats = chunkStreamer?.update(state.x, state.z);
+    if (streamStats && streamStats.labelVersion !== labelVersion) {
+      labelVersion = streamStats.labelVersion;
+      refreshChunkLabels();
+    }
     mappedWorld?.update?.(now / 1000);
     renderer.render(scene, camera); updatePlaceLabels(labels, camera);
     hudTime += dt; fpsTime += dt; fpsCount++;

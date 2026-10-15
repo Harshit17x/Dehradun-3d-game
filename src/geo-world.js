@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { createStreetInfrastructure } from './street-infrastructure.js';
+import { getVisualTheme, normalizeVisualMode } from './geo-visuals.js';
 
 // Buildings and the clock tower are deliberately generic illustrative geometry.
 // Their footprints and POI locations come from the supplied map; facade detail
@@ -84,5 +85,13 @@ export function createGeoWorld(data = {}, options = {}) {
   for (const [mat, { parent, parts }] of batches) { const merged = mergeGeometries(parts, false); for (const part of parts) part.dispose(); if (!merged) continue; geometries.add(merged); merged.computeBoundingSphere(); const mesh = new THREE.Mesh(merged, mat); mesh.receiveShadow = true; parent.add(mesh); }
   batches.clear(); if (!buildingsGroup.children.length) group.remove(buildingsGroup);
   group.userData.architecture = 'Mapped footprints with generic approximate architecture. Street infrastructure is data-driven OSM only.';
-  return { group, labels, landmark, infrastructure, setBuildingsVisible(visible) { buildingsGroup.visible = Boolean(visible); }, update(time) { infrastructure.update(time); }, dispose() { if (disposed) return; disposed = true; infrastructure.dispose(); illustrative?.dispose(); group.removeFromParent(); group.clear(); for (const g of geometries) g.dispose(); for (const m of materials) m.dispose(); for (const t of textures) t.dispose(); geometries.clear(); materials.clear(); textures.clear(); labels.length = 0; } };
+  function setTimeOfDay(mode) {
+    const visualMode = normalizeVisualMode(mode);
+    const theme = getVisualTheme(visualMode);
+    infrastructure.setNightMode(visualMode === 'night');
+    group.userData.visualMode = visualMode;
+    group.userData.visualTheme = theme.label;
+  }
+  setTimeOfDay('day');
+  return { group, labels, landmark, infrastructure, setBuildingsVisible(visible) { buildingsGroup.visible = Boolean(visible); }, setTimeOfDay, update(time) { infrastructure.update(time); }, dispose() { if (disposed) return; disposed = true; infrastructure.dispose(); illustrative?.dispose(); group.removeFromParent(); group.clear(); for (const g of geometries) g.dispose(); for (const m of materials) m.dispose(); for (const t of textures) t.dispose(); geometries.clear(); materials.clear(); textures.clear(); labels.length = 0; } };
 }

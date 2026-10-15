@@ -8,9 +8,10 @@
     "build": "vite build --outDir dist-drive && node build-standalone.mjs",
     "preview": "vite preview --outDir dist-drive",
     "fetch:map": "node scripts/fetch-dehradun.mjs",
+    "fetch:central": "node scripts/fetch-dehradun.mjs --central",
     "fetch:district": "node scripts/fetch-dehradun.mjs --district",
     "fetch:district-buildings": "node scripts/fetch-dehradun.mjs --district --district-buildings",
-    "test": "node --test src/drive-physics.test.js src/geo-driving.test.js src/street-infrastructure.test.js src/osm-normalize.test.js src/city-loader.test.js src/cesium-drive.test.js"
+    "test": "node --test src/drive-physics.test.js src/geo-driving.test.js src/street-infrastructure.test.js src/geo-visuals.test.js src/map-chunks.test.js src/mapped-surface.test.js src/osm-normalize.test.js src/city-loader.test.js src/cesium-drive.test.js"
   },
   "devDependencies": {
     "vite": "^8.3.0"

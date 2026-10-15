@@ -3,7 +3,10 @@
 import { getBarrierObstacles } from './street-infrastructure.js';
 export { getBarrierObstacles } from './street-infrastructure.js';
 export const DEFAULT_ORIGIN = { lat: 30.32448, lng: 78.04187 };
-const R = 6378137, DEG = Math.PI / 180, CELL = 24;
+// A wider broad-phase cell keeps the full-city network compact. Road segments
+// are still split at cell boundaries, so collision queries remain conservative
+// while long OSM survey ways no longer create hundreds of tiny objects.
+const R = 6378137, DEG = Math.PI / 180, CELL = 64;
 const CAR_RADIUS = 1.1;
 const VEHICLE_RADIUS = 1.12;
 const VEHICLE_HALF_LENGTH = 1.1;
@@ -282,14 +285,61 @@ export function createRoadNetwork(data) {
         const len = Math.hypot(s.bx - s.ax, s.bz - s.az), nx = -(s.bz - s.az) / len, nz = (s.bx - s.ax) / len;
         for (const offset of [0, -0.5, 0.5, -1, 1]) {
           const sx = px + nx * offset, sz = pz + nz * offset;
-          const heading = Number.isFinite(options.heading) ? options.heading : s.heading;
-          if (isVehicleDrivable(sx, sz, heading)) return { x: sx, z: sz, heading, speed: 0, steering: 0, distance: 0 };
+          const headings = Number.isFinite(options.heading) ? [options.heading] : [s.heading, s.heading + Math.PI];
+          for (const heading of headings) {
+            if (isVehicleDrivable(sx, sz, heading)) return { x: sx, z: sz, heading, speed: 0, steering: 0, distance: 0 };
+          }
         }
       }
     }
     throw new Error('No collision-free spawn in the supplied road network');
   }
-  return { segments, nearest, isDrivable, isVehicleDrivable, spawnNear, collisionAt, canMove, canVehicleMove, tower, bounds: { minX: nw.x, minZ: nw.z, maxX: se.x, maxZ: se.z }, origin };
+  function recoverVehicle(x, z, heading) {
+    if (![x, z, heading].every(Number.isFinite)) return null;
+    const near = nearest(x, z);
+    // Recovery is for numerical/map-edge wedging, not arbitrary off-road
+    // travel.  Keep the projection local so disconnected roads cannot become
+    // an accidental teleport destination.
+    if (!near || near.distance > near.width / 2 + 2.0) return null;
+
+    const searchRadius = Math.max(3, Math.min(near.distance + near.width / 2 + VEHICLE_HALF_LENGTH + 2.0, 8));
+    const candidates = new Set(roads.near(x, z, searchRadius));
+    if (near.segment) candidates.add(near.segment);
+    const ranked = [...candidates]
+      .map(segment => ({ segment, projection: projectSegment(x, z, segment) }))
+      .filter(({ projection }) => projection.distance <= searchRadius)
+      .sort((a, b) => a.projection.distance - b.projection.distance);
+    const headingDelta = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+    // Include the outer half of a normal city road: a pose can be wedged
+    // against a footprint while its nearest road projection is still near
+    // the centreline.  The displacement guard below remains the hard limit.
+    const offsets = [0, -0.35, 0.35, -0.7, 0.7, -1.1, 1.1, -1.5, 1.5, -1.8, 1.8, -2.2, 2.2, -2.8, 2.8, -3.4, 3.4];
+    const along = [0, -0.5, 0.5, -1, 1, -1.5, 1.5];
+    let best = null;
+    for (const { segment, projection } of ranked) {
+      const dx = segment.bx - segment.ax, dz = segment.bz - segment.az;
+      const length = Math.hypot(dx, dz);
+      if (length < 0.01) continue;
+      const nx = -dz / length, nz = dx / length;
+      const headings = [segment.heading, segment.heading + Math.PI]
+        .sort((a, b) => headingDelta(a, heading) - headingDelta(b, heading));
+      for (const distanceAlong of along) {
+        const t = clamp(projection.t + distanceAlong / length, 0, 1);
+        const px = segment.ax + dx * t, pz = segment.az + dz * t;
+        for (const offset of offsets) {
+          const sx = px + nx * offset, sz = pz + nz * offset;
+          if (Math.hypot(sx - x, sz - z) > 2.0 + 1e-9) continue;
+          for (const candidateHeading of headings) {
+            if (!isVehicleDrivable(sx, sz, candidateHeading)) continue;
+            const score = Math.hypot(sx - x, sz - z) + headingDelta(candidateHeading, heading) * 0.05;
+            if (!best || score < best.score) best = { x: sx, z: sz, heading: candidateHeading, score };
+          }
+        }
+      }
+    }
+    return best;
+  }
+  return { segments, nearest, isDrivable, isVehicleDrivable, recoverVehicle, spawnNear, collisionAt, canMove, canVehicleMove, tower, bounds: { minX: nw.x, minZ: nw.z, maxX: se.x, maxZ: se.z }, origin };
 }
 
 export function createGeoState(network) {
@@ -392,26 +442,15 @@ export function stepGeoDriving(state, input = {}, dt = 0, network) {
   if (![state.x, state.z, state.heading, state.speed, state.steering, state.distance].every(Number.isFinite)) throw new TypeError('Driving state requires finite numeric fields');
 
   if (!network.isVehicleDrivable(state.x, state.z, state.heading)) {
-    // Attempt gentle recovery projection if wedged close to a road corridor
-    const near = network.nearest(state.x, state.z);
-    let recovered = false;
-    if (near && near.distance <= near.width / 2 + 2.0) {
-      const toCenterX = near.x - state.x;
-      const toCenterZ = near.z - state.z;
-      const dist = Math.hypot(toCenterX, toCenterZ);
-      if (dist > 1e-4) {
-        const nx = toCenterX / dist, nz = toCenterZ / dist;
-        for (const nudge of [0.05, 0.1, 0.2, 0.4, 0.8, 1.2, 1.8]) {
-          const testX = state.x + nx * nudge, testZ = state.z + nz * nudge;
-          if (network.isVehicleDrivable(testX, testZ, state.heading)) {
-            state.x = testX; state.z = testZ;
-            recovered = true;
-            break;
-          }
-        }
-      }
-    }
-    if (!recovered) {
+    const recovered = network.recoverVehicle?.(state.x, state.z, state.heading);
+    if (recovered) {
+      state.x = recovered.x;
+      state.z = recovered.z;
+      state.heading = Math.atan2(Math.sin(recovered.heading), Math.cos(recovered.heading));
+      // A re-projected pose may have changed direction.  Drop the stale
+      // velocity, then let the current input accelerate from the valid pose.
+      state.speed = 0;
+    } else {
       state.speed = 0;
       return state;
     }
