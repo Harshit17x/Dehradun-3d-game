@@ -41,6 +41,9 @@ to keep the browser and physics workload bounded.
 | Space | Brake to a stop |
 | P / Pause button | Pause or resume |
 | R / Reset button | Reset car and trip to Rajpur Road |
+| C / Chase | Close chase camera |
+| O / Wide / Orbit | Wider road context camera |
+| V / Close / Preview | Close vehicle preview camera |
 
 Coarse-pointer devices receive on-screen driving buttons. Losing window focus
 or hiding the tab pauses driving and clears held inputs. Use Resume to continue.
@@ -69,7 +72,7 @@ explorer code is retained in `src/`, its entry is
 
 - `index.html`: responsive scene shell, inline styles and accessible HUD.
 - `src/drive-main.js`: Google vector 3D setup, mapped overlay streaming, input,
-  fixed-step loop, reset/pause, search and teardown.
+  fixed-step loop, camera controls, reset/pause, search and teardown.
 - `src/dehradun-data.json`: bounded OSM roads, buildings and named places with
   source URL, timestamp, license and counts.
 - `scripts/fetch-dehradun.mjs`: repeatable public-data refresh script; it does
@@ -80,7 +83,8 @@ explorer code is retained in `src/`, its entry is
   scenery streaming. The collision network remains available for the whole
   city while visual chunks are built and unloaded around the car.
 - `src/mapped-surface.js`: low-allocation typed-array road strips, markings,
-  ground and boundary meshes used by streamed chunks.
+  OSM bridge/layer separation, ground and boundary meshes used by streamed
+  chunks. Google Maps remains the terrain/elevation source for the primary mode.
 - `src/geo-driving.js`: geographic polyline driving, actual-road collision,
   full car capsule clearance, Clock Tower obstacle, and swept turns.
 - `src/google-drive-overlay.js`: Google vector map plus shared Three.js WebGL
@@ -110,8 +114,9 @@ explorer code is retained in `src/`, its entry is
 - A conservative 2.4 m circular footprint encloses the car. Continuous collision
   tests prevent tunnelling or cutting through sidewalks; glancing impacts slide
   along the boundary. Outer road ends stop the car.
-- Google Maps owns the vector 3D chase camera; the shared Three.js overlay keeps
-  the mapped car and scenery in the same geographic frame.
+- Google Maps owns the vector 3D camera; Chase, Wide/Orbit and Close/Preview
+  poses are selectable from the HUD or with C/O/V. The shared Three.js overlay
+  keeps the mapped car and scenery in the same geographic frame.
 - Full-city scenery is streamed in 320 m chunks: one nearest missing chunk is
   built per animation update, with a 720 m load radius and 980 m unload
   hysteresis. Distant buildings and road meshes are disposed as the car moves;
@@ -127,6 +132,12 @@ explorer code is retained in `src/`, its entry is
   mapped control node and nearby road edge; their exact physical pole placement
   and timing are not available from ordinary OSM tags. Unknown gates are not
   sealed as walls; explicit closed/locked/access=no barriers can collide.
+- The current OSM extract contains mapped signals, crossings, lamps, barriers,
+  bridge tags and positive/negative road layers, but no absolute `ele`,
+  `elevation` or `altitude` samples. Google vector 3D supplies the visible
+  terrain; bridge/layer roads receive only a relative topology separation, not
+  invented elevation. A true custom DEM would require a separately licensed or
+  enabled elevation data source.
 - World, car, textures, shadow resources, input listeners and renderer have
   explicit cleanup. Resource tests verify idempotent world/car disposal; these
   are not a substitute for a long-duration GPU memory profile.

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { getVisualTheme, normalizeVisualMode } from './geo-visuals.js';
 
 const CAP_SIDES = 12;
@@ -14,6 +15,17 @@ function roadWidth(road, points) {
   if (road.id === 'way/1556686563' || (points.length >= 20 && /roundabout/i.test(road.kind || ''))) return Math.max(width, 13);
   if (/chakrata/i.test(road.name || '')) return Math.max(width, 10);
   return width;
+}
+
+function isElevatedRoad(road) {
+  const bridge = String(road?.bridge || '').toLowerCase();
+  const layer = Number(road?.layer);
+  return bridge === 'yes' || bridge === 'true' || Number.isFinite(layer) && layer > 0;
+}
+
+function elevatedHeight(road) {
+  const layer = Number(road?.layer);
+  return THREE.MathUtils.clamp(1.35 + (Number.isFinite(layer) ? Math.max(0, layer - 1) * .55 : 0), 1.35, 4.2);
 }
 
 function flatGeometry(vertexCount, indexCount) {
@@ -62,7 +74,7 @@ function flatGeometry(vertexCount, indexCount) {
 export function createMappedSurface(data, network, { ground = true, boundary = true } = {}) {
   const group = new THREE.Group();
   group.name = 'OSM geographic road surface';
-  const geometries = new Set(), materials = new Set(), palette = {};
+  const geometries = new Set(), materials = new Set(), palette = {}, bridgeParts = { deck: [], rail: [], support: [] };
   const material = (role, options) => {
     const result = new THREE.MeshStandardMaterial(options);
     materials.add(result); palette[role] = result; return result;
@@ -105,7 +117,8 @@ export function createMappedSurface(data, network, { ground = true, boundary = t
       if (![ax, az, bx, bz].every(Number.isFinite)) continue;
       const length = Math.hypot(bx - ax, bz - az); if (length < .01) continue;
       const dashes = width >= 6.5 ? Math.floor(length / 5) : 0;
-      segments.push({ ax, az, bx, bz, width, length, dashes }); dashCount += dashes;
+      const elevated = isElevatedRoad(road);
+      segments.push({ ax, az, bx, bz, width, length, dashes, elevated, bridgeHeight: elevated ? elevatedHeight(road) : 0 }); dashCount += dashes;
       for (const [x, z] of [a, b]) {
         const key = `${x},${z}`, existing = discs.get(key);
         if (!existing || existing.radius < width / 2) discs.set(key, { x, z, radius: width / 2 });
@@ -124,6 +137,47 @@ export function createMappedSurface(data, network, { ground = true, boundary = t
     for (const { x, z, radius } of discs.values()) roads.disc(x, z, radius, ROAD_Y);
     addMesh('Mapped OSM roads', roads.finish(), material('road', { roughness: .96, metalness: .01 }));
     if (markings) addMesh('Mapped road centerlines', markings.finish(), material('marking', { roughness: .85, metalness: .05 }));
+  }
+
+  for (const { ax, az, bx, bz, width, length, elevated, bridgeHeight } of segments) {
+    if (!elevated) continue;
+    const height = bridgeHeight;
+    const angle = Math.atan2(bx - ax, bz - az);
+    const midpoint = [(ax + bx) / 2, (az + bz) / 2];
+    const deck = new THREE.BoxGeometry(width, .2, length);
+    deck.rotateY(angle); deck.translate(midpoint[0], height, midpoint[1]); bridgeParts.deck.push(deck);
+    for (const side of [-1, 1]) {
+      const rail = new THREE.BoxGeometry(.11, .42, length);
+      rail.rotateY(angle);
+      rail.translate(midpoint[0] + Math.cos(angle) * side * (width / 2 - .08), height + .29, midpoint[1] - Math.sin(angle) * side * (width / 2 - .08));
+      bridgeParts.rail.push(rail);
+    }
+    if (length >= 12) {
+      for (const fraction of [.25, .75]) {
+        const support = new THREE.BoxGeometry(.62, height, .62);
+        support.translate(ax + (bx - ax) * fraction, height / 2 - .1, az + (bz - az) * fraction);
+        bridgeParts.support.push(support);
+      }
+    }
+  }
+  if (bridgeParts.deck.length) {
+    const bridgeGroup = new THREE.Group();
+    bridgeGroup.name = 'Mapped OSM flyover structures';
+    bridgeGroup.userData.provenance = 'Raised visual structures derived only from OSM bridge/layer road tags';
+    const deckMaterial = material('bridgeDeck', { color: '#343b3b', roughness: .88, metalness: .04 });
+    const railMaterial = material('bridgeRail', { color: '#89958d', roughness: .7, metalness: .2 });
+    const supportMaterial = material('bridgeSupport', { color: '#626b68', roughness: .95 });
+    const merge = (parts, name, surfaceMaterial) => {
+      if (!parts.length) return;
+      const merged = mergeGeometries(parts, false);
+      for (const part of parts) part.dispose();
+      if (!merged) return;
+      addMesh(name, merged, surfaceMaterial, bridgeGroup);
+    };
+    merge(bridgeParts.deck, 'OSM flyover decks', deckMaterial);
+    merge(bridgeParts.rail, 'OSM flyover rails', railMaterial);
+    merge(bridgeParts.support, 'OSM flyover supports', supportMaterial);
+    group.add(bridgeGroup);
   }
 
   let disposed = false;

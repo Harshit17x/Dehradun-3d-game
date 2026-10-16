@@ -4,9 +4,11 @@ import { toLatLng } from './geo-driving.js';
 const CONFIG_URL = '/api/maps-config';
 const READY_TIMEOUT_MS = 20_000;
 const DEMO_MAP_ID = 'DEMO_MAP_ID';
-const CHASE_OFFSET_METRES = 20;
-const DEFAULT_ZOOM = 20.2;
-const DEFAULT_TILT = 67.5;
+export const CAMERA_MODES = Object.freeze({
+  chase: Object.freeze({ label: 'Chase', offset: 20, zoom: 20.2, tilt: 67.5 }),
+  wide: Object.freeze({ label: 'Wide', offset: 8, zoom: 19.2, tilt: 55 }),
+  preview: Object.freeze({ label: 'Preview', offset: -5, zoom: 20.8, tilt: 78 }),
+});
 const RAD_TO_DEG = 180 / Math.PI;
 
 let mapsLoaderPromise;
@@ -184,6 +186,12 @@ export async function createGoogleDriveOverlay({ container, data, state, worldGr
   let firstDrawTimer;
   let smoothedHeading = finiteState(state) ? state.heading : undefined;
   let latestState = finiteState(state) ? { x: state.x, z: state.z, heading: state.heading } : undefined;
+  let cameraMode = 'chase';
+  let cameraModeDirty = true;
+  let lastCameraAt = 0;
+  let lastCameraState;
+  let lastRedrawAt = 0;
+  let cameraFailureReported = false;
   const listeners = [];
   let resolveReady;
   let rejectReady;
@@ -202,15 +210,53 @@ export async function createGoogleDriveOverlay({ container, data, state, worldGr
       smoothedHeading += shortestAngle(smoothedHeading, state.heading) * (1 - Math.exp(-8 * Math.max(seconds, 1 / 120)));
       latestState = { x: state.x, z: state.z, heading: state.heading };
       if (map && typeof map.moveCamera === 'function') {
-        // Center slightly ahead of the car so the oblique vector map reads as a
-        // chase view while the mapped car remains visible in the lower middle.
-        const forwardX = -Math.sin(smoothedHeading) * CHASE_OFFSET_METRES;
-        const forwardZ = -Math.cos(smoothedHeading) * CHASE_OFFSET_METRES;
-        const center = toLatLng(state.x + forwardX, state.z + forwardZ, data.origin);
-        const heading = ((-smoothedHeading * RAD_TO_DEG) % 360 + 360) % 360;
-        map.moveCamera({ center, heading, zoom: DEFAULT_ZOOM, tilt: DEFAULT_TILT });
+        const mode = CAMERA_MODES[cameraMode] || CAMERA_MODES.chase;
+        const now = performance.now();
+        const moved = !lastCameraState || Math.hypot(state.x - lastCameraState.x, state.z - lastCameraState.z) > .12;
+        const turned = !lastCameraState || Math.abs(shortestAngle(state.heading, lastCameraState.heading)) > .006;
+        if (cameraModeDirty || (now - lastCameraAt >= 33 && (moved || turned))) {
+          try {
+            // Center slightly ahead/behind of the car so each mode reads as a
+            // distinct chase, wide, or close car-preview camera.
+            const forwardX = -Math.sin(smoothedHeading) * mode.offset;
+            const forwardZ = -Math.cos(smoothedHeading) * mode.offset;
+            const center = toLatLng(state.x + forwardX, state.z + forwardZ, data.origin);
+            const heading = ((-smoothedHeading * RAD_TO_DEG) % 360 + 360) % 360;
+            map.moveCamera({ center, heading, zoom: mode.zoom, tilt: mode.tilt });
+            lastCameraAt = now;
+            lastCameraState = { x: state.x, z: state.z, heading: state.heading };
+            cameraModeDirty = false;
+          } catch (error) {
+            if (!cameraFailureReported) {
+              cameraFailureReported = true;
+              status(onStatus, 'Google camera update delayed', error?.message || 'Google Maps rejected a camera update');
+            }
+          }
+        }
       }
-      webglOverlay?.requestRedraw?.();
+      const now = performance.now();
+      if (now - lastRedrawAt >= 16) {
+        try { webglOverlay?.requestRedraw?.(); lastRedrawAt = now; }
+        catch (error) {
+          if (!cameraFailureReported) {
+            cameraFailureReported = true;
+            status(onStatus, 'Google overlay redraw delayed', error?.message || 'Google Maps rejected a redraw request');
+          }
+        }
+      }
+    },
+    setCameraMode(mode) {
+      if (!CAMERA_MODES[mode] || cameraMode === mode) return cameraMode;
+      cameraMode = mode;
+      cameraModeDirty = true;
+      if (latestState) api.update(latestState, 0);
+      return cameraMode;
+    },
+    getCameraMode() {
+      return cameraMode;
+    },
+    getCameraModeLabel() {
+      return CAMERA_MODES[cameraMode]?.label || CAMERA_MODES.chase.label;
     },
     dispose() {
       if (disposed) return;
@@ -310,8 +356,8 @@ export async function createGoogleDriveOverlay({ container, data, state, worldGr
     if (disposed || failed) throw failed || makeError('Google Maps overlay was disposed');
     const mapOptions = {
       center: { lat: data.origin.lat, lng: data.origin.lng },
-      zoom: DEFAULT_ZOOM,
-      tilt: DEFAULT_TILT,
+      zoom: CAMERA_MODES.chase.zoom,
+      tilt: CAMERA_MODES.chase.tilt,
       heading: 0,
       mapId: loaded.mapId,
       renderingType: maps.RenderingType?.VECTOR || 'VECTOR',

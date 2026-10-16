@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { createGeoWorld } from './geo-world.js';
 import { createRoadNetwork, createGeoState, stepGeoDriving, toLocal } from './geo-driving.js';
 import { createVehicle } from './drive-vehicle.js';
-import { createGoogleDriveOverlay } from './google-drive-overlay.js';
+import { CAMERA_MODES, createGoogleDriveOverlay } from './google-drive-overlay.js';
 import { createCityLoader } from './city-loader.js';
 import { createMapChunkIndex, createChunkStreamer } from './map-chunks.js';
 import { createMappedSurface as createChunkSurface } from './mapped-surface.js';
@@ -205,6 +205,26 @@ function start() {
     ui['road-name'].textContent = network.nearest(state.x, state.z)?.name || 'Mapped OSM road';
   }
 
+  let selectedCameraMode = 'chase';
+  const cameraModeName = document.querySelector('#camera-mode-name');
+  const cameraModeButtons = [...document.querySelectorAll('[data-camera-mode]')];
+  const syncCameraModeUI = () => {
+    const label = CAMERA_MODES[selectedCameraMode]?.label || CAMERA_MODES.chase.label;
+    cameraModeButtons.forEach(button => {
+      const active = button.dataset.cameraMode === selectedCameraMode;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    if (cameraModeName) cameraModeName.textContent = `${label} · C / O / V`;
+  };
+  const setCameraMode = mode => {
+    if (!CAMERA_MODES[mode]) return;
+    selectedCameraMode = mode;
+    syncCameraModeUI();
+    googleOverlay?.setCameraMode?.(mode);
+  };
+  syncCameraModeUI();
+
   async function ensureGoogleOverlay() {
     const requestGeneration = ++googleOverlayGeneration;
     googleOverlay?.dispose();
@@ -232,6 +252,7 @@ function start() {
         throw new Error('Google 3D request was cancelled');
       }
       googleOverlay = result;
+      result.setCameraMode?.(selectedCameraMode);
       result.update(state, 1 / 60);
       return result;
     }).catch(error => {
@@ -249,6 +270,25 @@ function start() {
   async function loadCityArea(lat, lng) {
     setGeoStatus(`Loading mapped Dehradun streets near ${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}…`, 'loading');
     try {
+      // The default bundle already contains the complete bounded Dehradun
+      // extract. Reposition locally first so a temporary Overpass outage does
+      // not turn an in-city search into an HTTP error or discard the playable
+      // Google scene.
+      const localTarget = toLocal(lat, lng, currentData.origin);
+      if (currentData.bounds && lat >= currentData.bounds.south && lat <= currentData.bounds.north
+        && lng >= currentData.bounds.west && lng <= currentData.bounds.east) {
+        const nextState = network.spawnNear(localTarget.x, localTarget.z);
+        Object.assign(state, nextState);
+        Object.assign(previous, { x: state.x, z: state.z, heading: state.heading });
+        accumulator = 0;
+        streamStats = null;
+        streamX = state.x; streamZ = state.z; streamElapsed = 0;
+        updateStreaming(true);
+        syncCar(); updateHUD(); updateMapProvenance();
+        googleOverlay?.update(state, 0);
+        setGeoStatus(`Google vector 3D active · moved to mapped Dehradun streets near ${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}.`, 'google');
+        return;
+      }
       const nextData = await cityLoader.load(lat, lng);
       const nextNetwork = createRoadNetwork(nextData);
       const target = toLocal(lat, lng, nextData.origin);
@@ -311,6 +351,9 @@ function start() {
     if (!event.repeat && event.code === 'KeyP') setPaused(!paused);
     if (!event.repeat && event.code === 'KeyR') reset();
     if (!event.repeat && event.code === 'KeyN') setTimeOfDay(visualMode === 'night' ? 'day' : 'night');
+    if (!event.repeat && event.code === 'KeyC') setCameraMode('chase');
+    if (!event.repeat && event.code === 'KeyO') setCameraMode('wide');
+    if (!event.repeat && event.code === 'KeyV') setCameraMode('preview');
     if (!event.repeat && event.code === 'KeyH') {
       const active = vehicle.toggleHeadlights();
       const button = document.querySelector('#headlights-toggle');
@@ -333,6 +376,10 @@ function start() {
   on(document.querySelector('#city-search-input'), 'keydown', event => {
     if (event.key === 'Enter') { event.preventDefault(); sound.init(); void searchCity(); }
   });
+  cameraModeButtons.forEach(button => on(button, 'click', () => {
+    sound.init();
+    setCameraMode(button.dataset.cameraMode);
+  }));
 
   const audioToggle = document.querySelector('#audio-toggle');
   if (audioToggle) on(audioToggle, 'click', () => {
