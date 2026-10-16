@@ -1,6 +1,6 @@
 # Dehradun Drive
 
-A geographic Three.js driving scene with exactly one controllable Ember GT,
+A Google Maps vector 3D driving scene with exactly one controllable Ember GT,
 real mapped roads and closed building footprints from OpenStreetMap, plus an
 approximate 3D treatment of mapped places such as Ghanta Ghar and named shops.
 The streets and POI coordinates are geographic; façades, building heights and
@@ -8,14 +8,9 @@ the clock-tower mesh are visual approximations, not a survey or photogrammetry.
 
 ## Play
 
-Open **`dehradun-drive.html`** in a modern WebGL 2-capable browser for the
-offline geographic OSM mode. It embeds its JavaScript, Three.js, CSS and map
-dataset; no CDN, API key, model downloads, fonts, or build tools are needed for
-that local mode.
-
-When running with `npm run dev` or `npm run preview`, the **Google 3D** button
-loads Google Maps as the basemap and renders the same mapped buildings and the
-single car through Google's `WebGLOverlayView`. This requires the Maps
+Run with `npm run dev` or `npm run preview`. The app starts directly in Google
+Maps vector 3D mode and renders the mapped buildings and single car through
+Google's `WebGLOverlayView`. This requires the Maps
 JavaScript API, billing, a browser-referrer restriction, and a vector-capable
 Google Map ID. Configure these only in private environment settings:
 
@@ -26,28 +21,10 @@ VITE_GOOGLE_MAP_ID=your_vector_map_id
 
 The key is served only by the local Vite `/api/maps-config` runtime endpoint;
 it is not written into source or the standalone HTML. If Google fails to load,
-the app explicitly reports the reason and remains playable in geographic OSM
-mode. Google mode is not embedded in the offline HTML because its runtime
-configuration endpoint is intentionally server-backed.
+the app reports the reason and keeps the drive paused rather than silently
+switching to a different renderer.
 
-The **Cesium 3D** button is the photorealistic-city path. It loads CesiumJS
-and uses the Cesium Ion token through the private `/api/cesium-config` endpoint.
-Before starting Vite, configure the token locally without committing it:
-
-```sh
-export VITE_CESIUM_ION_TOKEN='your_private_cesium_ion_token'
-npm run dev
-```
-
-Or place the same variable in a local ignored environment file. The token is
-never written into source, the generated app snapshot, or logs. Your Cesium
-Ion project must have access to Google Photorealistic 3D Tiles if you want the
-photorealistic Dehradun surface; otherwise Cesium reports a clear fallback to
-Ion terrain/OSM buildings when available. Cesium also requires the generated
-`dist-drive/cesium` assets, so use `npm run preview` or `npm run dev` rather
-than opening `dehradun-drive.html` directly for Cesium mode.
-
-The local mode now includes a **Go to Dehradun place** search. Enter a mapped
+The Google-backed mapped overlay includes a **Go to Dehradun place** search. Enter a mapped
 place, street, market, neighbourhood, or landmark and the app requests the
 bounded city cell around it, replaces the current OSM roads/buildings, and
 spawns the car on the nearest mapped road. The city loader covers a bounded
@@ -91,9 +68,8 @@ explorer code is retained in `src/`, its entry is
 ### Files
 
 - `index.html`: responsive scene shell, inline styles and accessible HUD.
-- `src/drive-main.js`: geographic WebGL setup, input, fixed-step loop, chase
-  camera, minimap, mapped labels, reset/pause, Google 3D toggle, context-loss
-  messaging and teardown.
+- `src/drive-main.js`: Google vector 3D setup, mapped overlay streaming, input,
+  fixed-step loop, reset/pause, search and teardown.
 - `src/dehradun-data.json`: bounded OSM roads, buildings and named places with
   source URL, timestamp, license and counts.
 - `scripts/fetch-dehradun.mjs`: repeatable public-data refresh script; it does
@@ -107,19 +83,13 @@ explorer code is retained in `src/`, its entry is
   ground and boundary meshes used by streamed chunks.
 - `src/geo-driving.js`: geographic polyline driving, actual-road collision,
   full car capsule clearance, Clock Tower obstacle, and swept turns.
-- `src/google-drive-overlay.js`: optional Google vector map plus shared
-  Three.js WebGL overlay with auth, timeout and context-loss handling.
-- `src/cesium-drive.js`: CesiumJS viewer, Google Photorealistic 3D Tiles/Ion
-  fallback, local ENU car placement, Cesium chase camera, runtime-token
-  handling and teardown. The local Three.js car is hidden while the single
-  Cesium car proxy is visible, so there is never a second controllable vehicle.
+- `src/google-drive-overlay.js`: Google vector map plus shared Three.js WebGL
+  overlay with auth, timeout and context-loss handling.
 - `src/city-loader.js`, `server/city-map.js`, `server/geocode.js`: bounded
   city-cell loading and place search. Google Geocoding is used server-side when
   the key is configured; otherwise the server uses public Nominatim. Client
   responses are validated and stale requests are aborted.
 - `vite.config.js`: private runtime Google Maps configuration endpoint.
-- `vite.config.js`: private Google and Cesium runtime configuration endpoints
-  plus Cesium asset handling.
 - `src/drive-world.js`: legacy synthetic world retained for comparison only.
 - `src/drive-vehicle.js`: one detailed car, separately animated wheels and
   material-batched body details.
@@ -140,22 +110,18 @@ explorer code is retained in `src/`, its entry is
 - A conservative 2.4 m circular footprint encloses the car. Continuous collision
   tests prevent tunnelling or cutting through sidewalks; glancing impacts slide
   along the boundary. Outer road ends stop the car.
-- Exponential camera damping is independent of render frame rate. Desired chase
-  positions are constrained to the street network to reduce building clipping.
-- Standard depth fog, warm sun, hemisphere fill and soft PCF shadows.
+- Google Maps owns the vector 3D chase camera; the shared Three.js overlay keeps
+  the mapped car and scenery in the same geographic frame.
 - Full-city scenery is streamed in 320 m chunks: one nearest missing chunk is
   built per animation update, with a 720 m load radius and 980 m unload
   hysteresis. Distant buildings and road meshes are disposed as the car moves;
   the complete OSM collision network remains authoritative so streaming never
   makes a road temporarily undrivable.
 - Mapped architecture is batched by facade material; car details are batched
-  within their animated groups. Device pixel ratio is capped at 1.75, and a
-  local 2048² shadow map follows the vehicle. Google mode shares Google's
-  WebGL context and never resizes or clears the basemap canvas.
-- Cesium mode streams the city surface instead of trying to package all of
-  Dehradun into the repository. The OSM physics and search layer remains the
-  authoritative drivable network; Google/Cesium 3D Tiles are visual surface
-  data and are not treated as automatically walkable collision geometry.
+  within their animated groups. Google mode shares Google's WebGL context and
+  never resizes or clears the basemap canvas. The OSM physics and search layer
+  remains the authoritative drivable network; Google 3D is visual surface data
+  and is not treated as automatically walkable collision geometry.
 - Traffic signals, pedestrian crossings, barriers and street lamps are only
   rendered when supplied by OSM. Signal poles are explicitly inferred from a
   mapped control node and nearby road edge; their exact physical pole placement

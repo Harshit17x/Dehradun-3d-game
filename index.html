@@ -4,49 +4,40 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#edf0e5">
-  <meta name="description" content="A peaceful, single-car geographic driving experience through mapped Dehradun streets, with optional Google Maps comparison.">
+  <meta name="description" content="A peaceful, single-car Google Maps vector 3D driving experience through mapped Dehradun streets.">
   <title>Dehradun Drive — A little closer to the hills</title>
-  <link rel="stylesheet" href="/cesium/Widgets/widgets.css">
   <style>
     :root { font-family: 'Avenir Next', Avenir, 'Segoe UI', sans-serif; color: #253c35; background: #cbd8d6; font-synthesis: none; }
     * { box-sizing: border-box; }
     body { margin: 0; overflow: hidden; }
-     #scene { position: fixed; inset: 0; z-index: 2; width: 100%; height: 100%; display: block; outline: none; pointer-events: none; }
-     #map-panel { position: fixed; z-index: 1; left: 38px; bottom: 34px; width: min(350px, calc(100vw - 76px)); padding: 14px; border: 1px solid #fff8; border-radius: 18px; background: #f5f4eaf2; box-shadow: 0 10px 36px #16362218; pointer-events: auto; }
-     #map-panel[hidden] { display: none; }
-     #map-canvas { width: 100%; height: 215px; overflow: hidden; border-radius: 10px; background: #d9e0c9; }
+     #map-panel { position: fixed; z-index: 1; inset: 0; width: 100%; height: 100%; background: #b9c6cd; pointer-events: auto; }
+     #map-canvas { width: 100%; height: 100%; overflow: hidden; background: #b9c6cd; }
      .map-panel-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 1px 10px; }
      .map-panel-title .eyebrow { font-size: 9px; letter-spacing: 1.8px; }
      #map-status { margin: 9px 1px 0; color: #758176; font-size: 10px; line-height: 1.45; }
-     #map-panel.google-primary { inset: 0; left: 0; bottom: auto; z-index: 3; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-     #map-panel.google-primary #map-canvas { height: 100%; border-radius: 0; }
+     #map-panel.google-primary { z-index: 1; }
      #map-panel.google-primary .map-panel-title, #map-panel.google-primary #map-status { position: absolute; z-index: 1; left: 28px; right: 28px; width: max-content; max-width: calc(100vw - 56px); margin: 0; padding: 10px 14px; border-radius: 12px; background: #f5f4eaf0; box-shadow: 0 7px 25px #16362216; }
      #map-panel.google-primary .map-panel-title { top: 24px; }
      #map-panel.google-primary #map-status { top: 72px; }
-     #cesium-panel { position: fixed; z-index: 1; inset: 0; display: none; background: #b9c6cd; }
-     #cesium-panel.active { display: block; }
-     #cesium-canvas { width: 100%; height: 100%; }
-     #cesium-status { position: absolute; left: 28px; top: 24px; z-index: 1; max-width: min(520px, calc(100vw - 56px)); padding: 10px 14px; border-radius: 12px; background: #f5f4eaf0; box-shadow: 0 7px 25px #16362216; font-size: 11px; line-height: 1.4; }
      #hud { position: fixed; z-index: 4; inset: 0; pointer-events: none; padding: 34px 38px; display: flex; flex-direction: column; justify-content: space-between; }
-     #place-list { position: fixed; z-index: 3; inset: 0; pointer-events: none; overflow: hidden; }
-     .place-label { position: absolute; transform: translate(-50%, -100%); padding: 4px 7px; color: #344b3e; background: #f5f4eae8; border: 1px solid #fff9; border-radius: 8px; box-shadow: 0 4px 14px #29493918; font-size: 10px; white-space: nowrap; }
-     .place-label-landmark { color: #8e4c32; font-weight: 700; border-color: #d9b99c; }
-     .place-label[hidden] { display: none; }
     header, .bottom { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
     .eyebrow { font-size: 10px; font-weight: 700; letter-spacing: 2.8px; text-transform: uppercase; }
     .brand { background: #f5f4eae8; border: 1px solid #fff9; box-shadow: 0 8px 35px #2949390b; border-radius: 4px 22px 22px 22px; padding: 23px 27px; }
     .brand .eyebrow { color: #718273; }
     h1 { font-family: Georgia, 'Times New Roman', serif; font-size: clamp(28px, 3.5vw, 43px); font-weight: 400; letter-spacing: -1.7px; margin: 8px 0 6px; line-height: 1.1; }
      .brand p { font-size: 12px; color: #758176; margin: 0; }
-     #geo-status { max-width: 300px; margin-top: 12px; color: #667568; font-size: 10px; line-height: 1.4; }
-     #geo-status[data-tone="google"] { color: #55744e; }
-     #geo-status[data-tone="diagnostic"] { color: #9a5d3a; }
-    .brand h1 span { color: #879b77; }
-     .top-right { display: flex; align-items: center; gap: 10px; }
+      #geo-status { max-width: 300px; margin-top: 12px; color: #667568; font-size: 10px; line-height: 1.4; }
+      #geo-status[data-tone="google"] { color: #55744e; }
+      #geo-status[data-tone="diagnostic"] { color: #9a5d3a; }
+      #stream-status { max-width: 300px; margin-top: 8px; color: #718273; font-size: 10px; line-height: 1.35; }
+      #stream-status[data-tone="loading"] { color: #9a7040; }
+      #stream-status[data-tone="ready"] { color: #55744e; }
+     .brand h1 span { color: #879b77; }
+      .top-right { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; max-width: min(760px, 58vw); }
      .city-search { display: flex; gap: 6px; align-items: center; padding: 5px; border: 1px solid #fff8; background: #f5f4eaed; border-radius: 50px; pointer-events: auto; }
      .city-search input { width: 170px; border: 0; outline: 0; background: transparent; color: #344b3e; font: inherit; font-size: 12px; padding: 8px 10px; }
      .city-search button { border: 0; padding: 8px 12px; background: #d8e1c9; }
-    .weather, button { border: 1px solid #fff8; background: #f5f4eaed; color: #344b3e; border-radius: 50px; font: inherit; font-size: 12px; padding: 13px 17px; }
+     .weather, button { border: 1px solid #fff8; background: #f5f4eaed; color: #344b3e; border-radius: 50px; font: inherit; font-size: 12px; padding: 10px 14px; min-height: 44px; }
     .weather { display: flex; gap: 10px; align-items: center; }
     .weather i { color: #bb914a; font-style: normal; font-size: 18px; }
     button { cursor: pointer; pointer-events: auto; transition: background .15s, transform .15s; }
@@ -55,13 +46,7 @@
     .location { position: absolute; left: 50%; top: 38px; transform: translateX(-50%); text-align: center; background: #f5f4eade; padding: 13px 24px; border-radius: 40px; min-width: 190px; }
     .location .eyebrow { font-size: 9px; letter-spacing: 2px; color: #7a8774; }
     #road-name { font-size: 13px; font-weight: 600; margin-top: 5px; }
-    .bottom { align-items: flex-end; }
-    .map-card { width: 220px; background: #f5f4eaf2; border: 1px solid #fff8; border-radius: 18px; padding: 16px; box-shadow: 0 10px 36px #1636220d; }
-    .map-title { display: flex; justify-content: space-between; align-items: center; padding: 0 1px 10px; }
-    .map-title .eyebrow { font-size: 9px; letter-spacing: 1.8px; }
-    .map-title span:last-child { font-size: 10px; color: #849477; }
-    #minimap { display: block; width: 186px; height: 166px; border-radius: 9px; }
-     .map-caption { font-size: 9px; color: #86917e; padding: 10px 0 0; letter-spacing: .5px; }
+     .bottom { align-items: flex-end; }
     .controls { display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 4px; }
     .controls-title { background: #f7f5e9ed; border-radius: 30px; padding: 9px 18px; font-size: 11px; color: #6b7d67; }
     .controls-row { display: flex; gap: 18px; padding: 12px 20px; background: #f5f4eae8; border-radius: 12px; font-size: 10px; align-items: center; }
@@ -83,44 +68,38 @@
     .touch-set { display: flex; gap: 8px; }
     #touch button { border-radius: 14px; width: 54px; height: 54px; font-size: 22px; padding: 0; touch-action: none; user-select: none; -webkit-user-select: none; }
     #touch button.pressed { background: #bfd0a5; }
-    .veh-btn { border: 1px solid #c5cbb9; background: #ffffff88; color: #344b3e; border-radius: 20px; font-size: 11px; padding: 6px 12px; cursor: pointer; transition: all .15s; }
+     .veh-btn { border: 1px solid #c5cbb9; background: #ffffff88; color: #344b3e; border-radius: 20px; font-size: 11px; padding: 6px 12px; min-height: 40px; cursor: pointer; transition: all .15s; }
     .veh-btn:hover { background: #fff; transform: translateY(-1px); }
     .veh-btn.active { background: #344b3e; color: #f5f4ea; border-color: #344b3e; font-weight: 600; box-shadow: 0 2px 8px #344b3e33; }
     .vehicle-picker { display: flex; gap: 6px; margin-top: 8px; justify-content: flex-end; }
     @media (pointer: coarse) { #touch { display: flex; } .controls-row { display: none; } }
-     @media (max-width: 850px) { #hud { padding: 20px; } #map-panel { left: 20px; bottom: 20px; width: min(320px, calc(100vw - 40px)); } .location { top: 167px; } .controls { display: none; } .brand { padding: 17px 21px; } .weather { display: none; } .top-right { flex-direction: column; align-items: flex-end; } .map-card { width: 170px; padding: 12px; } #minimap { width: 144px; height: 130px; } .telemetry { min-width: 150px; padding: 18px; } #speed { font-size: 52px; } .stats { gap: 12px; font-size: 9px; } }
-     @media (max-height: 540px) { #hud { padding: 14px; } .brand { padding: 12px 18px; } h1 { font-size: 28px; } .brand p, #geo-status, .map-caption, .controls-title { display: none; } .location { top: 16px; } .map-card { width: 150px; padding: 10px; } #minimap { width: 128px; height: 100px; } .telemetry { padding: 14px 18px; } #touch { bottom: 175px; } #map-panel { bottom: 14px; } }
+      @media (max-width: 850px) { #hud { padding: 20px; } header { flex-wrap: wrap; } .location { top: 167px; } .controls { display: none; } .brand { padding: 17px 21px; } .weather { display: none; } .top-right { flex: 1 1 300px; max-width: 390px; gap: 6px; } .city-search input { width: 145px; } .top-right button { padding: 9px 11px; } .telemetry { min-width: 150px; padding: 18px; } #speed { font-size: 52px; } .stats { gap: 12px; font-size: 9px; } }
+      @media (max-width: 560px) { #hud { padding: 12px; } header { align-items: stretch; flex-direction: column; gap: 8px; } .brand { padding: 13px 16px; border-radius: 4px 18px 18px 18px; } h1 { font-size: clamp(26px, 9vw, 34px); } .brand p { font-size: 11px; } #geo-status, #stream-status { max-width: none; } .top-right { width: 100%; max-width: none; justify-content: flex-start; } .city-search { flex: 1 1 100%; } .city-search input { width: 100%; } .top-right button { flex: 0 0 auto; } .location { top: 153px; max-width: calc(100vw - 24px); min-width: 0; padding: 10px 15px; } .bottom { gap: 8px; align-items: flex-end; } .telemetry { min-width: 0; flex: 1 1 auto; padding: 12px 13px 11px; border-radius: 15px; } .vehicle-picker { gap: 3px; flex-wrap: wrap; } .veh-btn { font-size: 9px; padding: 5px 7px; min-height: 36px; } #speed { font-size: 44px; } .speed-row { gap: 7px; } .stats { gap: 5px; font-size: 8px; } #touch { left: 12px; right: 12px; bottom: 174px; } #touch button { width: 50px; height: 50px; min-height: 50px; } }
+      @media (max-height: 540px) { #hud { padding: 14px; } .brand { padding: 12px 18px; } h1 { font-size: 28px; } .brand p, #geo-status, .controls-title { display: none; } .location { top: 16px; } .telemetry { padding: 14px 18px; } #touch { bottom: 175px; } }
   </style>
 </head>
 <body>
-  <canvas id="scene" aria-label="3D mapped Dehradun driving scene. Use W A S D or arrow keys to drive." tabindex="0"></canvas>
-  <section id="map-panel" hidden aria-label="Google Maps geographic driving mode">
+  <section id="map-panel" class="google-primary" aria-label="Google Maps geographic driving mode">
     <div class="map-panel-title"><span class="eyebrow">Google Maps driving mode</span><span class="eyebrow">VECTOR 3D · ENU</span></div>
     <div id="map-canvas" aria-label="Google vector map centered on Dehradun"></div>
-    <p id="map-status">Google’s actual basemap is optional. The local OSM scene remains available as a fallback.</p>
+    <p id="map-status" aria-live="polite">Loading Google Maps vector 3D basemap and mapped overlay…</p>
   </section>
-  <section id="cesium-panel" aria-label="Cesium photorealistic 3D driving mode">
-    <div id="cesium-canvas"></div>
-    <div id="cesium-status">Cesium 3D mode is off.</div>
-  </section>
-  <div id="place-list" aria-label="Mapped places"></div>
   <main id="hud">
-    <header>
-      <div class="brand"><div class="eyebrow">Uttarakhand · India</div><h1>Dehradun <span>Drive.</span></h1><p>A little closer to the hills.</p><div id="geo-status" role="status">Mapped streets + approximate facades · Google Maps when enabled.</div></div>
-       <div class="top-right"><div class="city-search"><input id="city-search-input" type="search" placeholder="Go to Dehradun place…" aria-label="Search a place in Dehradun"><button id="city-search-button" type="button">Go</button></div><div class="weather"><i id="time-icon">☀</i><span id="time-text">Valley daylight</span></div><button id="time-toggle" aria-label="Switch to night mode" aria-pressed="false">☾ Night</button><button id="cesium-toggle" aria-label="Show Cesium photorealistic 3D mode" aria-pressed="false">Cesium 3D</button><button id="map-toggle" aria-label="Show Google Maps 3D mode" aria-pressed="false">Google 3D</button><button id="audio-toggle" aria-label="Toggle vehicle audio" aria-pressed="false">🔊 Sound</button><button id="headlights-toggle" aria-label="Toggle headlights" aria-pressed="true">💡 Lights</button><button id="pause" aria-label="Pause driving" aria-pressed="false">Ⅱ Pause</button><button id="reset" title="Return to mapped OSM roads (R)">↺ Reset</button></div>
+     <header>
+       <div class="brand"><div class="eyebrow">Uttarakhand · India</div><h1>Dehradun <span>Drive.</span></h1><p>A little closer to the hills.</p><div id="geo-status" role="status" aria-live="polite">Loading Google Maps vector 3D…</div><div id="stream-status" role="status" aria-live="polite">Preparing mapped overlay chunks…</div></div>
+       <div class="top-right"><div class="city-search"><input id="city-search-input" type="search" placeholder="Go to Dehradun place…" aria-label="Search a place in Dehradun"><button id="city-search-button" type="button">Go</button></div><div class="weather"><i id="time-icon">☀</i><span id="time-text">Valley daylight</span></div><button type="button" id="time-toggle" aria-label="Switch to night mode" aria-pressed="false">☾ Night</button><button type="button" id="audio-toggle" aria-label="Toggle vehicle audio" aria-pressed="false">🔊 Sound</button><button type="button" id="headlights-toggle" aria-label="Toggle headlights" aria-pressed="true">💡 Lights</button><button type="button" id="pause" aria-label="Pause driving" aria-pressed="false">Ⅱ Pause</button><button type="button" id="reset" aria-label="Reset to mapped OSM roads" title="Return to mapped OSM roads (R)">↺ Reset</button></div>
     </header>
     <section class="location" aria-label="Current road"><div class="eyebrow">Free drive · <span id="heading">N</span></div><div id="road-name">Rajpur Road</div></section>
-    <section id="status" role="status"><h2>Welcome to the valley.</h2><p>Building your streetscape…</p></section>
-    <div id="touch" aria-label="Touch driving controls"><div class="touch-set"><button data-control="left" aria-label="Steer left">←</button><button data-control="right" aria-label="Steer right">→</button></div><div class="touch-set"><button data-control="reverse" aria-label="Brake or reverse">↓</button><button data-control="forward" aria-label="Accelerate">↑</button></div></div>
+     <section id="status" role="status" aria-live="polite"><h2>Welcome to the valley.</h2><p>Building your streetscape…</p></section>
+     <div id="touch" aria-label="Touch driving controls"><div class="touch-set"><button type="button" data-control="left" aria-label="Steer left">←</button><button type="button" data-control="right" aria-label="Steer right">→</button></div><div class="touch-set"><button type="button" data-control="reverse" aria-label="Brake or reverse">↓</button><button type="button" data-control="forward" aria-label="Accelerate">↑</button></div></div>
     <footer class="bottom">
-      <section class="map-card" aria-label="Mapped street map"><div class="map-title"><span class="eyebrow">Mapped Doon Valley</span><span>N ↑</span></div><canvas id="minimap" width="372" height="332" aria-label="Minimap showing the car and mapped OSM roads"></canvas><div class="map-caption">OSM ROADS · APPROXIMATE FACADES · GOOGLE WHEN ENABLED</div></section>
        <section class="controls" aria-label="Driving controls"><div class="controls-title">Open roads. No rush. Keep left.</div><div class="controls-row"><div class="key-group"><kbd>W</kbd><kbd>S</kbd> Drive / Rev</div><div class="key-group"><kbd>A</kbd><kbd>D</kbd> Steer</div><div class="key-group"><kbd>Shift</kbd> Turbo</div><div class="key-group"><kbd>H</kbd> Lights</div><div class="key-group"><kbd>N</kbd> Day / Night</div><div class="key-group"><kbd>Space</kbd> Brake</div></div></section>
       <section class="telemetry" aria-label="Driving telemetry">
         <div class="eyebrow" id="vehicle-title">2024 BMW M4 Competition</div>
         <div class="vehicle-picker" aria-label="Vehicle selection">
-          <button class="veh-btn active" data-vehicle="bmw" title="2024 BMW M4 Coupe Competition">🏎️ BMW M4</button>
-          <button class="veh-btn" data-vehicle="police" title="Uttarakhand Police Interceptor">🚓 Police</button>
-          <button class="veh-btn" data-vehicle="ember" title="Ember GT Prototype">⚡ Ember</button>
+           <button type="button" class="veh-btn active" data-vehicle="bmw" aria-pressed="true" title="2024 BMW M4 Coupe Competition">🏎️ BMW M4</button>
+           <button type="button" class="veh-btn" data-vehicle="police" aria-pressed="false" title="Uttarakhand Police Interceptor">🚓 Police</button>
+           <button type="button" class="veh-btn" data-vehicle="ember" aria-pressed="false" title="Ember GT Prototype">⚡ Ember</button>
         </div>
         <div class="speed-row"><span id="speed">0</span><span class="speed-unit">KM/H</span></div>
         <div class="speed-line"><div id="speed-fill"></div></div>
