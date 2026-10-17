@@ -1,7 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { cp, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-// Run after Vite to create a convenient standalone app snapshot.
+// Run after Vite to create a convenient standalone app snapshot and sync output directories.
 const root = resolve(import.meta.dirname);
 const html = await readFile(resolve(root, 'dist-drive/index.html'), 'utf8');
 const scripts = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*><\/script>/g)];
@@ -15,3 +15,8 @@ if (/\bfrom\s*["']\.\.?\//.test(javascript) || /\bimport\s*\(/.test(javascript))
 const bundled = html.replace(tag, () => `<script type="module">\n${javascript.replace(/<\/script/gi, '<\\/script')}\n</script>`);
 await writeFile(resolve(root, 'dehradun-drive.html'), bundled);
 console.log(`App snapshot: dehradun-drive.html (${(Buffer.byteLength(bundled) / 1024 / 1024).toFixed(2)} MB)`);
+
+// Sync to dist/ so standard deployment presets (Vercel, Netlify, Cloudflare Pages) find their default directory.
+await cp(resolve(root, 'dist-drive'), resolve(root, 'dist'), { recursive: true, force: true });
+console.log('Synchronized output to dist/ for standard deployment compatibility');
+

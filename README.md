@@ -20,6 +20,7 @@
 **[📍 Landmarks](#-iconic-landmarks)** •
 **[🕹️ Controls](#-controls)** •
 **[⚡ Quick Start](#-quick-start)** •
+**[🚀 Deployment](#-deployment--hosting)** •
 **[🏗️ Architecture](#-system-architecture)** •
 **[🗺️ Data Provenance](#-data-provenance--accuracy)**
 
@@ -222,6 +223,49 @@ The project is built to deliver a seamless local experience. To enable custom Go
 | `npm test` | Runs the full 51-test Node.js automated test suite across physics and GIS |
 | `npm run fetch:map` | Refreshes the full Dehradun OSM dataset (`30.24–30.43° N`, `77.94–78.17° E`) via Overpass API |
 | `npm run fetch:central` | Fetches a lightweight central-city extract for rapid local testing |
+
+---
+
+## 🚀 Deployment & Hosting
+
+Dehradun 3D can be hosted for **free** across several modern platforms:
+
+### 1. ⚡ Vercel (Recommended — Fastest Setup & Global CDN)
+This repository includes a pre-configured [`vercel.json`](./vercel.json):
+1. Import your GitHub repository on **[vercel.com](https://vercel.com)**.
+2. Under **Environment Variables**, add:
+   - `VITE_GOOGLE_MAPS_API_KEY`: *(Optional)* Your Google Maps API key
+   - `VITE_GOOGLE_MAP_ID`: *(Optional)* Your Vector 3D Map ID
+3. Click **Deploy**. Vercel will automatically build the `dist-drive` bundle and serve it across its global edge network.
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FHarshit17x%2FDehradun-3d-game)
+
+<br/>
+
+### 2. 🐙 GitHub Pages (100% Free & Automated)
+A zero-config GitHub Actions workflow is provided at [`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml):
+1. Go to your repository **Settings** > **Pages**.
+2. Under **Build and deployment** > **Source**, select **GitHub Actions**.
+3. *(Optional)* Add your secrets under **Settings** > **Secrets and variables** > **Actions**:
+   - `VITE_GOOGLE_MAPS_API_KEY`
+   - `VITE_GOOGLE_MAP_ID`
+4. Push to `main`. Your site will be automatically live at `https://<your-username>.github.io/Dehradun-3d-game/`.
+
+<br/>
+
+### 3. 🌐 Render / Railway (Full-Stack with Live OSM Search Backend)
+If you want the live backend endpoints (`/api/city-map` and `/api/geocode`) running on Node.js:
+- **Build Command**: `npm install && npm run build`
+- **Start Command**: `npm run preview -- --host 0.0.0.0 --port $PORT`
+- **Environment Variables**: Add `VITE_GOOGLE_MAPS_API_KEY` and `VITE_GOOGLE_MAP_ID`.
+
+<br/>
+
+### 4. 💎 Netlify
+This repository includes [`netlify.toml`](./netlify.toml):
+1. Link your repo on **[netlify.com](https://www.netlify.com/)**.
+2. Build command (`npm run build`) and publish directory (`dist-drive`) are detected automatically.
+3. Add your environment variables and click **Deploy Site**.
 
 ---
 

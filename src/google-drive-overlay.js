@@ -54,17 +54,34 @@ function installAuthHook(onFailure) {
 }
 
 async function fetchMapsConfig(signal) {
-  let response;
+  const envKey = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAPS_API_KEY) ||
+                 (typeof window !== 'undefined' && window.__MAPS_CONFIG__?.key);
+  const envMapId = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GOOGLE_MAP_ID) ||
+                   (typeof window !== 'undefined' && window.__MAPS_CONFIG__?.mapId);
+
   try {
-    response = await fetch(CONFIG_URL, { signal, headers: { accept: 'application/json' } });
+    const response = await fetch(CONFIG_URL, { signal, headers: { accept: 'application/json' } });
+    if (response.ok) {
+      const config = await response.json();
+      if (config && typeof config.key === 'string' && config.key.trim()) {
+        return {
+          key: config.key.trim(),
+          mapId: typeof config.mapId === 'string' && config.mapId.trim() ? config.mapId.trim() : DEMO_MAP_ID,
+        };
+      }
+    }
   } catch {
-    throw makeError('Google Maps configuration could not be fetched');
+    // Backend endpoint not reachable (e.g. static hosting on Vercel / GitHub Pages)
   }
-  if (!response.ok) throw makeError('Google Maps configuration is unavailable');
-  let config;
-  try { config = await response.json(); } catch { throw makeError('Google Maps configuration is invalid'); }
-  if (!config || typeof config.key !== 'string' || !config.key.trim()) throw makeError('Google Maps API key is not configured');
-  return { key: config.key.trim(), mapId: typeof config.mapId === 'string' && config.mapId.trim() ? config.mapId.trim() : DEMO_MAP_ID };
+
+  if (envKey && typeof envKey === 'string' && envKey.trim()) {
+    return {
+      key: envKey.trim(),
+      mapId: (typeof envMapId === 'string' && envMapId.trim()) ? envMapId.trim() : DEMO_MAP_ID,
+    };
+  }
+
+  throw makeError('Google Maps API key is not configured');
 }
 
 function loadMapsOnce(signal) {

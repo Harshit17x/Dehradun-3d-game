@@ -29,6 +29,7 @@ export default defineConfig(({ mode }) => {
   // Keep the original explorer's assets accessible during development, but
   // this procedural scene needs none of them in its production output.
   return {
+    base: './',
     plugins: [mapsConfigPlugin({
       key: env.VITE_GOOGLE_MAPS_API_KEY || '',
       mapId: env.VITE_GOOGLE_MAP_ID || '',
