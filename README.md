@@ -5,7 +5,7 @@
 
 [![GitHub Stars](https://img.shields.io/github/stars/Harshit17x/Dehradun-3d-game?style=for-the-badge&logo=github&color=38ef7d)](https://github.com/Harshit17x/Dehradun-3d-game/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/Harshit17x/Dehradun-3d-game?style=for-the-badge&color=11998e)](https://github.com/Harshit17x/Dehradun-3d-game/network/members)
-[![Tests Passing](https://img.shields.io/badge/Tests-51%2F51%20Passing-brightgreen?style=for-the-badge&logo=node.js)](https://github.com/Harshit17x/Dehradun-3d-game)
+[![Tests Passing](https://img.shields.io/badge/Tests-42%2F42%20Passing-brightgreen?style=for-the-badge&logo=node.js)](https://github.com/Harshit17x/Dehradun-3d-game)
 [![Three.js](https://img.shields.io/badge/Three.js-r186-black?style=for-the-badge&logo=three.js)](https://threejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-8.3-646CFF?style=for-the-badge&logo=vite)](https://vitejs.dev/)
 [![OpenStreetMap](https://img.shields.io/badge/OpenStreetMap-GIS%20Data-7EBC6F?style=for-the-badge&logo=openstreetmap)](https://www.openstreetmap.org/)
@@ -220,7 +220,7 @@ The project is built to deliver a seamless local experience. To enable custom Go
 | `npm run dev` | Starts the high-speed Vite dev server with hot module replacement (HMR) |
 | `npm run build` | Compiles production assets into `dist-drive/` and builds the standalone bundle |
 | `npm run preview` | Serves the production build with local `/api/maps-config` emulation |
-| `npm test` | Runs the full 51-test Node.js automated test suite across physics and GIS |
+| `npm test` | Runs the full 42-test Node.js automated test suite across geographic physics and GIS |
 | `npm run fetch:map` | Refreshes the full Dehradun OSM dataset (`30.24–30.43° N`, `77.94–78.17° E`) via Overpass API |
 | `npm run fetch:central` | Fetches a lightweight central-city extract for rapid local testing |
 
@@ -319,21 +319,17 @@ flowchart TD
 
 ## 🧪 Comprehensive Test Suite
 
-This project adheres to rigorous software engineering standards with **51 automated tests** covering real-world GIS edge cases:
+This project adheres to rigorous software engineering standards with **42 automated tests** covering real-world GIS edge cases:
 
 ```bash
 $ npm test
 
 ✔ validates city coordinates and returns a normalized dataset
 ✔ latest load aborts an older request and does not publish stale data
-✔ spawn, road constants and footprint match rendered grid
-✔ forward and reverse caps, braking, coasting and signed movement
-✔ steering smooths, decays, and reverses yaw when backing
-✔ rounded corners are navigable only when the entire footprint clears
-✔ outer bounds stop the car and reset returns to valid road
-✔ seeded random driving cannot leave road across 20,000 steps
+✔ local metre coordinates round-trip geographic bounds, POIs and custom origins
 ✔ real OSM provenance counts, mapped Ghanta Ghar coordinate and named roads remain present
 ✔ map roads are asymmetric surveyed geometry rather than a generated axis grid
+✔ circle radius boundaries and narrow lanes remain usable without a 2.4m disk
 ✔ full capsule blocks nose and centreline collisions which a centre disk misses
 ✔ sweeps cannot jump thin walls, missing road slivers, or disconnected roads
 ✔ yaw sweeps cannot rotate through a building, and blocked translation cannot accumulate yaw
@@ -342,7 +338,7 @@ $ npm test
 ✔ mapped street lamps gain bounded night illumination and return to dark in daytime
 ✔ closed mapped barrier blocks the full vehicle sweep without teleport recovery
 ...
-ℹ tests 51 | ℹ pass 51 | ℹ fail 0 | ℹ duration 8.3s
+ℹ tests 42 | ℹ pass 42 | ℹ fail 0 | ℹ duration 8.5s
 ```
 
 ---

@@ -64,9 +64,7 @@ website and the runtime Google config endpoint. `npm run fetch:map` refreshes th
 full bounded Dehradun city region (`30.24–30.43 N`, `77.94–78.17 E`) from public
 OpenStreetMap Overpass servers and replaces `src/dehradun-data.json` only after a
 complete response. Use `npm run fetch:central` for the smaller central extract
-when testing with a limited Overpass endpoint. Existing
-explorer code is retained in `src/`, its entry is
-`valley-explorer.html`, and the original `dist/` is not overwritten.
+when testing with a limited Overpass endpoint.
 
 ### Files
 
@@ -94,14 +92,11 @@ explorer code is retained in `src/`, its entry is
   the key is configured; otherwise the server uses public Nominatim. Client
   responses are validated and stale requests are aborted.
 - `vite.config.js`: private runtime Google Maps configuration endpoint.
-- `src/drive-world.js`: legacy synthetic world retained for comparison only.
-- `src/drive-vehicle.js`: one detailed car, separately animated wheels and
-  material-batched body details.
-- `src/drive-physics.js`: legacy synthetic-grid physics retained for comparison
-  tests; the game entry uses geographic physics instead.
-- `src/drive-physics.test.js` and `src/geo-driving.test.js`: physics,
-  geographic alignment, full-footprint collision, geometry and disposal checks.
-- `build-standalone.mjs`: standalone offline packaging.
+- `src/drive-vehicle.js`: dynamic vehicle models, separately animated wheels,
+  headlights, and material-batched body details.
+- `src/geo-driving.test.js`: geographic physics, alignment, full-footprint collision,
+  geometry and disposal checks.
+- `build-standalone.mjs`: standalone offline packaging and output synchronization.
 
 ## Behaviour and rendering
 

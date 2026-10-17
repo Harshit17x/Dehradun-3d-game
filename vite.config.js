@@ -34,6 +34,6 @@ export default defineConfig(({ mode }) => {
       key: env.VITE_GOOGLE_MAPS_API_KEY || '',
       mapId: env.VITE_GOOGLE_MAP_ID || '',
     })],
-    build: { copyPublicDir: false, chunkSizeWarningLimit: 1800 },
+    build: { chunkSizeWarningLimit: 1800 },
   };
 });
