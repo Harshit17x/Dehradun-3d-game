@@ -5,7 +5,7 @@
 
 [![GitHub Stars](https://img.shields.io/github/stars/Harshit17x/Dehradun-3d-game?style=for-the-badge&logo=github&color=38ef7d)](https://github.com/Harshit17x/Dehradun-3d-game/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/Harshit17x/Dehradun-3d-game?style=for-the-badge&color=11998e)](https://github.com/Harshit17x/Dehradun-3d-game/network/members)
-[![Tests Passing](https://img.shields.io/badge/Tests-42%2F42%20Passing-brightgreen?style=for-the-badge&logo=node.js)](https://github.com/Harshit17x/Dehradun-3d-game)
+[![Tests Passing](https://img.shields.io/badge/Tests-47%2F47%20Passing-brightgreen?style=for-the-badge&logo=node.js)](https://github.com/Harshit17x/Dehradun-3d-game)
 [![Three.js](https://img.shields.io/badge/Three.js-r186-black?style=for-the-badge&logo=three.js)](https://threejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-8.3-646CFF?style=for-the-badge&logo=vite)](https://vitejs.dev/)
 [![OpenStreetMap](https://img.shields.io/badge/OpenStreetMap-GIS%20Data-7EBC6F?style=for-the-badge&logo=openstreetmap)](https://www.openstreetmap.org/)
@@ -103,6 +103,24 @@ Most web-based driving games rely on artificial, fictional grid worlds. **Dehrad
 
 </td>
 </tr>
+<tr>
+<td width="50%" valign="top">
+
+### 📍 3D GPS Route Tracker & Road Navigation Line
+- **Glowing Navigation Ribbon**: Search or select any destination in Dehradun to plot an animated 3D navigation line elevated 0.28m above surveyed asphalt.
+- **Surveyed OSM A* Pathfinding**: Bounded graph routing traversing 18,000+ real road segments with zero off-road clipping.
+- **Sky Beacon & 3D Waypoint Pin**: 18-meter glowing cyan light pillar and spinning diamond marker pin visible across the valley.
+
+</td>
+<td width="50%" valign="top">
+
+### 🧭 Real-Time Navigation Telemetry & HUD
+- **Dynamic Route Telemetry**: Glassmorphic HUD banner displaying destination name, distance in meters/km, and estimated travel time (ETA).
+- **Arrival Detection & Harmonic Chimes**: Automatic proximity trigger (<= 14m) with melodic clock tower bell celebration.
+- **Instant Landmark Autocomplete**: Built-in suggestions for top spots (*Clock Tower*, *Pacific Mall*, *Survey Chowk*, *Mussoorie Bus Stand*, *Kumar Sweets*).
+
+</td>
+</tr>
 </table>
 
 ---
@@ -160,6 +178,7 @@ Drive across authentic surveyed roads centered on Dehradun's geographic origin (
 | <kbd>V</kbd> | **Preview Camera** | Close-up beauty camera highlighting vehicle details |
 | <kbd>P</kbd> | **Pause / Resume** | Freezes simulation and fixed-step updates |
 | <kbd>R</kbd> | **Reset Car** | Respawn car facing North on Rajpur Road near Clock Tower |
+| <kbd>Esc</kbd> | **Clear Route** | Cancels active GPS navigation tracker line & guidance HUD |
 
 ### 📱 Touch & Mobile Controls
 - **On-Screen D-Pad**: Automatic touch joystick and button layout enabled on mobile, iPad, and coarse pointer screens.
@@ -318,7 +337,7 @@ flowchart TD
 
 ## 🧪 Comprehensive Test Suite
 
-This project adheres to rigorous software engineering standards with **42 automated tests** covering real-world GIS edge cases:
+This project adheres to rigorous software engineering standards with **47 automated tests** covering real-world GIS edge cases:
 
 ```bash
 $ npm test
@@ -334,10 +353,15 @@ $ npm test
 ✔ yaw sweeps cannot rotate through a building, and blocked translation cannot accumulate yaw
 ✔ builds typed-array road strips with round joining coverage
 ✔ renders OSM bridge roads as raised flyover structures with provenance
+✔ findPlace locates places via exact match, partial match, and aliases
+✔ findRoutePath returns connected waypoints between coordinates
+✔ findRoutePath falls back to direct line when network is empty or unreachable
+✔ createRibbonGeometry builds valid vertex positions and UVs
+✔ RouteTracker manages destination, updates metrics and handles arrival
 ✔ mapped street lamps gain bounded night illumination and return to dark in daytime
 ✔ closed mapped barrier blocks the full vehicle sweep without teleport recovery
 ...
-ℹ tests 42 | ℹ pass 42 | ℹ fail 0 | ℹ duration 8.5s
+ℹ tests 47 | ℹ pass 47 | ℹ fail 0 | ℹ duration 22.9s
 ```
 
 ---
@@ -370,6 +394,7 @@ $ npm test
 │   ├── map-chunks.js         # 320m spatial chunking & nearest-first queue
 │   ├── mapped-surface.js     # Low-allocation typed-array road geometry
 │   ├── osm-normalize.js      # Overpass OSM topology cleaner & data normalizer
+│   ├── route-tracker.js      # 3D GPS navigation line, A* pathfinding & sky beacon
 │   └── street-infrastructure.js # Signals, crossings, street lamps & barrier physics
 ├── build-standalone.mjs      # Packages offline dehradun-drive.html snapshot
 ├── index.html                # Responsive web app shell & HUD
@@ -408,6 +433,7 @@ Contributions make open source an amazing place to learn, inspire, and create! A
 - [x] Continuous capsule collision detection & curb sliding
 - [x] Google Maps Vector 3D WebGLOverlayView integration
 - [x] Day / Night real-time celestial lighting & headlights
+- [x] 📍 3D GPS route navigation line with A* pathfinding & landmark beacon
 - [ ] 🌧️ Dynamic Doon Valley weather (Monsoon rain, road reflections & winter foothill fog)
 - [ ] 🚶 Pedestrian pathfinding & AI traffic along Rajpur Road
 - [ ] 📻 Live Doon FM internet radio player in vehicle cockpit

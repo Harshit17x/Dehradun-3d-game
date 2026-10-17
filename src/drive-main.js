@@ -8,6 +8,7 @@ import { createMapChunkIndex, createChunkStreamer } from './map-chunks.js';
 import { createMappedSurface as createChunkSurface } from './mapped-surface.js';
 import { sound } from './audio.js';
 import { getVisualTheme, normalizeVisualMode } from './geo-visuals.js';
+import { RouteTracker, findRoutePath, findPlace } from './route-tracker.js';
 import mappedData from './dehradun-data.json' with { type: 'json' };
 
 const status = document.querySelector('#status');
@@ -19,10 +20,15 @@ const timeIcon = document.querySelector('#time-icon');
 const timeText = document.querySelector('#time-text');
 const geoStatus = document.querySelector('#geo-status');
 const streamStatus = document.querySelector('#stream-status');
+const routeGuidance = document.querySelector('#route-guidance');
+const routeDestName = document.querySelector('#route-dest-name');
+const routeDistance = document.querySelector('#route-distance');
+const routeEta = document.querySelector('#route-eta');
+const routeClearBtn = document.querySelector('#route-clear-btn');
 const ui = Object.fromEntries(['speed', 'speed-fill', 'gear', 'distance', 'fps', 'heading', 'road-name'].map(id => [id, document.getElementById(id)]));
 const events = new AbortController();
 const on = (target, type, handler, options = {}) => target.addEventListener(type, handler, { ...options, signal: events.signal });
-let vehicle, mappedWorld, frame = 0, stopped = false;
+let vehicle, mappedWorld, routeTracker, frame = 0, stopped = false;
 let googleOverlay, googleOverlayPromise, googleOverlayGeneration = 0, cityLoader;
 let currentData = mappedData;
 
@@ -70,6 +76,47 @@ function start() {
   const worldGroup = new THREE.Group();
   worldGroup.name = 'Mapped Google overlay chunks';
   vehicle = createVehicle();
+  routeTracker = new RouteTracker(worldGroup);
+
+  function showRouteGuidance(destName) {
+    if (!routeGuidance) return;
+    if (routeDestName) routeDestName.textContent = destName;
+    routeGuidance.classList.remove('arrived');
+    routeGuidance.hidden = false;
+  }
+
+  function hideRouteGuidance() {
+    if (!routeGuidance) return;
+    routeGuidance.hidden = true;
+    routeGuidance.classList.remove('arrived');
+  }
+
+  function updateRouteHUD(info) {
+    if (!routeGuidance || !info) return;
+    if (info.arrived) {
+      routeGuidance.classList.add('arrived');
+      if (routeDestName) routeDestName.textContent = `🎉 Arrived at ${info.name}!`;
+      if (routeDistance) routeDistance.textContent = '0 m';
+      if (routeEta) routeEta.textContent = 'Destination reached';
+    } else {
+      routeGuidance.classList.remove('arrived');
+      if (routeDestName) routeDestName.textContent = info.name;
+      if (routeDistance) {
+        routeDistance.textContent = info.distanceMeters < 1000 ? `${info.distanceMeters} m` : `${info.distanceKm} km`;
+      }
+      if (routeEta) routeEta.textContent = `${info.etaMinutes} min`;
+    }
+  }
+
+  if (routeClearBtn) {
+    on(routeClearBtn, 'click', () => {
+      sound.init();
+      sound.playClick();
+      routeTracker?.clear();
+      hideRouteGuidance();
+      setGeoStatus('Navigation cleared · Free driving active.', 'ready');
+    });
+  }
 
   let visualMode = 'day';
   let chunkStreamer;
@@ -268,6 +315,8 @@ function start() {
   }
 
   async function loadCityArea(lat, lng) {
+    routeTracker?.clear();
+    hideRouteGuidance();
     setGeoStatus(`Loading mapped Dehradun streets near ${Number(lat).toFixed(4)}, ${Number(lng).toFixed(4)}…`, 'loading');
     try {
       // The default bundle already contains the complete bounded Dehradun
@@ -322,11 +371,40 @@ function start() {
     const button = document.querySelector('#city-search-button');
     if (button) button.disabled = true;
     try {
+      // 1. Check local places in current mapped extract (instant 0ms response)
+      const localMatch = findPlace(query, currentData?.places);
+      if (localMatch && Number.isFinite(localMatch.x) && Number.isFinite(localMatch.z)) {
+        const dest = { x: localMatch.x, z: localMatch.z };
+        const path = findRoutePath(state, dest, network);
+        routeTracker.setRoute(path, localMatch.name, dest);
+        showRouteGuidance(localMatch.name);
+        sound.playClick();
+        const distKm = (Math.hypot(dest.x - state.x, dest.z - state.z) / 1000).toFixed(2);
+        setGeoStatus(`Navigation active · route plotted to ${localMatch.name} (${distKm} km). Follow the glowing tracker line!`, 'ready');
+        if (inputElement) inputElement.value = localMatch.name;
+        return;
+      }
+
+      // 2. Fall back to geocoding API
       const response = await fetch(`/api/geocode?q=${encodeURIComponent(query)}`, { headers: { accept: 'application/json' } });
       const body = await response.json();
       if (!response.ok || body.status !== 'ok' || !body.results?.length) throw new Error(body.error || 'No place found inside the Dehradun city region');
       const result = body.results[0];
-      if (inputElement) inputElement.value = result.name.split(',')[0];
+      const placeName = result.name.split(',')[0];
+      if (inputElement) inputElement.value = placeName;
+
+      const localTarget = toLocal(result.lat, result.lng, currentData.origin);
+      if (currentData.bounds && result.lat >= currentData.bounds.south && result.lat <= currentData.bounds.north
+        && result.lng >= currentData.bounds.west && result.lng <= currentData.bounds.east) {
+        const path = findRoutePath(state, localTarget, network);
+        routeTracker.setRoute(path, placeName, localTarget);
+        showRouteGuidance(placeName);
+        sound.playClick();
+        const distKm = (Math.hypot(localTarget.x - state.x, localTarget.z - state.z) / 1000).toFixed(2);
+        setGeoStatus(`Navigation active · route plotted to ${placeName} (${distKm} km). Follow the glowing tracker line!`, 'ready');
+        return;
+      }
+
       await loadCityArea(result.lat, result.lng);
     } catch (error) {
       setGeoStatus(`Search failed · ${error.message || 'try a named place in Dehradun'}.`, 'diagnostic');
@@ -334,6 +412,8 @@ function start() {
   }
 
   function reset() {
+    routeTracker?.clear();
+    hideRouteGuidance();
     Object.assign(state, createGeoState(network));
     Object.assign(previous, { x: state.x, z: state.z, heading: state.heading });
     accumulator = 0;
@@ -350,6 +430,12 @@ function start() {
     if (bindings[event.code]) { event.preventDefault(); if (!paused) keyboard.add(event.code); }
     if (!event.repeat && event.code === 'KeyP') setPaused(!paused);
     if (!event.repeat && event.code === 'KeyR') reset();
+    if (!event.repeat && event.code === 'Escape' && routeTracker?.active) {
+      sound.playClick();
+      routeTracker.clear();
+      hideRouteGuidance();
+      setGeoStatus('Navigation cleared · Free driving active.', 'ready');
+    }
     if (!event.repeat && event.code === 'KeyN') setTimeOfDay(visualMode === 'night' ? 'day' : 'night');
     if (!event.repeat && event.code === 'KeyC') setCameraMode('chase');
     if (!event.repeat && event.code === 'KeyO') setCameraMode('wide');
@@ -484,6 +570,17 @@ function start() {
       streamElapsed += dt;
       updateStreaming();
       mappedWorld?.update?.(now / 1000);
+      if (routeTracker?.active) {
+        const wasArrived = routeTracker.arrived;
+        const info = routeTracker.update(state, dt);
+        if (info) {
+          updateRouteHUD(info);
+          if (!wasArrived && info.arrived) {
+            sound.playChime();
+            setGeoStatus(`🎉 Arrived at ${info.name}! Destination reached.`, 'ready');
+          }
+        }
+      }
       googleOverlay?.update(state, paused ? 0 : dt);
       hudTime += dt; fpsTime += dt; fpsCount++;
       if (hudTime > 0.1) { updateHUD(); hudTime = 0; }
@@ -518,6 +615,8 @@ function dispose() {
   googleOverlay?.dispose();
   googleOverlay = null;
   googleOverlayPromise = null;
+  routeTracker?.dispose();
+  routeTracker = null;
   vehicle?.dispose();
   mappedWorld?.dispose();
 }
